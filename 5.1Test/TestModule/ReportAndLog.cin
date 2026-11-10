@@ -1,0 +1,96 @@
+/*@!Encoding:936*/
+
+
+/// <Logging>
+variables
+{
+  char TimeString[100];//记录log的时间，格式:year_month_date_hh_mm_ss
+  char LoggingBLockName[50]="Logging";//定义你在分析窗口里建立的日志记录块的名称
+  char logFile[500];
+  
+}
+
+void MakeSafeLogCaseName(char sourceName[], char safeName[])
+{
+  int index;
+
+  snprintf(safeName, elcount(safeName), "%s", sourceName);
+  for(index = 0; (index < elcount(safeName)) && (safeName[index] != 0); index++)
+  {
+    if((safeName[index] == '\\') || (safeName[index] == '/') ||
+       (safeName[index] == ':') || (safeName[index] == '*') ||
+       (safeName[index] == '?') || (safeName[index] == '"') ||
+       (safeName[index] == '<') || (safeName[index] == '>') ||
+       (safeName[index] == '|'))
+      safeName[index] = '_';
+  }
+}
+
+void GetCurrentTestCaseLogName(char logName[])
+{
+  char currentTitle[200];
+
+  testGetCurrentTestCaseTitle(currentTitle, elcount(currentTitle));
+  MakeSafeLogCaseName(currentTitle, logName);
+}
+/// <Logging>
+void loggingStart(char testCaseTitle[])
+{
+  char reflogfilename[200];
+  char safeTestCaseTitle[200];
+
+  MakeSafeLogCaseName(testCaseTitle, safeTestCaseTitle);
+  stopLogging(LoggingBLockName);
+  snprintf(logFile,elCount(logFile),"Code\\5.1Test\\ReportAndLog\\%s\\LogFiles\\%s.blf", TimeString, safeTestCaseTitle);
+  setLogFileName(LoggingBLockName,logFile);
+  startLogging(LoggingBLockName);
+  snprintf(reflogfilename,elCount(reflogfilename),".\\LogFiles\\%s.blf",safeTestCaseTitle);
+  testReportAddExternalRef("url","日志",reflogfilename);
+}
+/// <Logging>
+void loggingStop()
+{
+  stopLogging(LoggingBLockName);
+}
+/// <TestControl>
+void StartToLogging()
+{
+  char testCaseTitle[200];
+
+  GetCurrentTestCaseLogName(testCaseTitle);
+  loggingStart(testCaseTitle);
+}
+/// <TestControl>
+void StopToLogging()
+{
+  loggingStop();
+}
+
+void InitReportAndLog(char reportTitle[ ])
+{
+  char reportFileName[500];
+  char initialLogFile[500];
+  char currentTestCaseName[200];
+  long tm[9];
+
+  if (TimeString[0] != 0)
+  {
+    testModuleTitle(reportTitle);
+    return;
+  }
+
+  getLocalTime(tm);
+  snprintf(TimeString,elCount(TimeString),"%d_%02d_%02d_%02d_%02d_%02d",tm[5]+1900,tm[4]+1,tm[3],tm[2],tm[1],tm[0]);
+
+  GetCurrentTestCaseLogName(currentTestCaseName);
+  if(currentTestCaseName[0] == 0)
+    MakeSafeLogCaseName(reportTitle, currentTestCaseName);
+  snprintf(initialLogFile,elCount(initialLogFile),
+           "Code\\5.1Test\\ReportAndLog\\%s\\LogFiles\\%s.blf",
+           TimeString, currentTestCaseName);
+  setLogFileName(LoggingBLockName,initialLogFile);
+
+  snprintf(reportFileName,elCount(reportFileName),"Code\\5.1Test\\ReportAndLog\\%s\\%s",TimeString,reportTitle);
+  TestReportFileName(reportFileName);
+  testModuleTitle(reportTitle);
+}

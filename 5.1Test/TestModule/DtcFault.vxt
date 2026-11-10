@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testmodule title="DTC故障测试" version="1.0">
+  <description>DTC fault-injection automated test cases.</description>
+  <testgroup title="DTC测试">
+    <testgroup title="1.C12987 - 集成制动控制器通讯丢失">
+      <capltestcase name="DTC_BND_COM_001_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_001 - 0x098 总线实测丢失490ms，不报DTC C12987"></capltestcase>
+      <capltestcase name="DTC_BND_COM_002_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_002 - 0x098 总线实测丢失510ms，报DTC C12987"></capltestcase>
+    </testgroup>
+    <testgroup title="2.C13187 - 电动助力转向控制器通讯丢失">
+      <capltestcase name="DTC_BND_COM_003_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_003 - 0x132 总线实测丢失490ms，不报DTC C13187"></capltestcase>
+      <capltestcase name="DTC_BND_COM_004_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_004 - 0x132 总线实测丢失510ms，报DTC C13187"></capltestcase>
+    </testgroup>
+    <testgroup title="3.C15187 - 气囊控制器通讯丢失">
+      <capltestcase name="DTC_BND_COM_005_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_005 - 0x021 总线实测丢失490ms，不报DTC C15187"></capltestcase>
+      <capltestcase name="DTC_BND_COM_006_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_006 - 0x021 总线实测丢失510ms，报DTC C15187"></capltestcase>
+    </testgroup>
+    <testgroup title="4.D16987 - 后右角雷达通讯丢失">
+      <capltestcase name="DTC_BND_COM_007_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_007 - 0x4F7 总线实测丢失1990ms，不报DTC D16987"></capltestcase>
+      <capltestcase name="DTC_BND_COM_008_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_008 - 0x4F7 总线实测丢失2100ms，报DTC D16987"></capltestcase>
+    </testgroup>
+    <testgroup title="5.C24587 - 信息计算中心通讯丢失">
+      <capltestcase name="DTC_BND_COM_009_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_009 - 0x510 总线实测丢失3990ms，不报DTC C24587"></capltestcase>
+      <capltestcase name="DTC_BND_COM_010_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_010 - 0x510 总线实测丢失4100ms，报DTC C24587"></capltestcase>
+    </testgroup>
+    <testgroup title="6.C14187 - 左区域控制器通讯丢失">
+      <capltestcase name="DTC_BND_COM_011_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_011 - 0x23B 总线实测丢失490ms，不报DTC C14187"></capltestcase>
+      <capltestcase name="DTC_BND_COM_012_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_012 - 0x23B 总线实测丢失510ms，报DTC C14187"></capltestcase>
+    </testgroup>
+    <testgroup title="7.C14087 - 与VCU控制器失去通讯">
+      <capltestcase name="DTC_BND_COM_013_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_013 - 0x038 总线实测丢失490ms，不报DTC C14087"></capltestcase>
+      <capltestcase name="DTC_BND_COM_014_Dtc_CommunicationLossBoundary_Run" title="DTC_BND_COM_014 - 0x038 总线实测丢失510ms，报DTC C14087"></capltestcase>
+    </testgroup>
+    <testgroup title="8.C44381 - VCU控制器网络信号无效">
+      <capltestcase name="DTC_BND_CRC_026_Dtc_CrcCycleBoundary_Run" title="DTC_BND_CRC_026 - 0x038 CRC错误，连续10帧，检查DTC C44381"></capltestcase>
+      <capltestcase name="DTC_BND_CNT_020_Dtc_AliveCounterCycleBoundary_Run" title="DTC_BND_CNT_020 - 0x038 COUNT错误，连续10帧，检查DTC C44381"></capltestcase>
+      <capltestcase name="DTC_023_Dtc_VcuDlc_Run" title="DTC_023 - 0x038 DLC错误，连续10帧，检查DTC C44381"></capltestcase>
+    </testgroup>
+    <testgroup title="9.C41881 - 集成制动控制器车速信号无效">
+      <capltestcase name="DTC_001_Dtc_SignalInvalid_VehicleSpeed" title="DTC_001 - 0x098 车速信号无效，连续10帧，检查DTC C41881" />
+      <capltestcase name="DTC_002_Dtc_SignalInvalid_VehicleSpeedRaw" title="DTC_002 - 0x098 车速无效值0x1FFF，连续10帧，检查DTC C41881" />
+      <capltestcase name="DTC_003_Dtc_OneboxSignalFault_Run" title="DTC_003 - 0x22B 任意信号无效，连续10帧，检查DTC C41881"></capltestcase>
+      <capltestcase name="DTC_004_Dtc_OneboxSignalFault_Run" title="DTC_004 - 0x098 车速信号无效，连续10帧，检查DTC C41881"></capltestcase>
+      <capltestcase name="DTC_005_Dtc_OneboxDlc_Run" title="DTC_005 - 0x098 DLC错误，连续10帧，检查DTC C41881"></capltestcase>
+      <capltestcase name="DTC_006_Dtc_OneboxDlc_Run" title="DTC_006 - 0x22B DLC错误，连续10帧，检查DTC C41881"></capltestcase>
+      <capltestcase name="DTC_BND_CRC_002_Dtc_CrcCycleBoundary_Run" title="DTC_BND_CRC_002 - 0x098 CRC错误，连续10帧，检查DTC C41881"></capltestcase>
+      <capltestcase name="DTC_BND_CRC_004_Dtc_CrcCycleBoundary_Run" title="DTC_BND_CRC_004 - 0x22B CRC错误，连续10帧，检查DTC C41881"></capltestcase>
+      <capltestcase name="DTC_BND_CRC_020_Dtc_CrcCycleBoundary_Run" title="DTC_BND_CRC_020 - 0x098 CRC2错误，连续10帧，检查DTC C41881"></capltestcase>
+      <capltestcase name="DTC_BND_CRC_022_Dtc_CrcCycleBoundary_Run" title="DTC_BND_CRC_022 - 0x22B CRC2错误，连续10帧，检查DTC C41881"></capltestcase>
+      <capltestcase name="DTC_BND_CRC_024_Dtc_CrcCycleBoundary_Run" title="DTC_BND_CRC_024 - 0x22B CRC4错误，连续10帧，检查DTC C41881"></capltestcase>
+      <capltestcase name="DTC_BND_CNT_002_Dtc_AliveCounterCycleBoundary_Run" title="DTC_BND_CNT_002 - 0x098 COUNT错误，连续10帧，检查DTC C41881"></capltestcase>
+      <capltestcase name="DTC_BND_CNT_004_Dtc_AliveCounterCycleBoundary_Run" title="DTC_BND_CNT_004 - 0x22B COUNT错误，连续10帧，检查DTC C41881"></capltestcase>
+    </testgroup>
+    <testgroup title="10.C42081 - 电动助力转向控制器网络信号无效">
+      <capltestcase name="DTC_007_Dtc_SignalInvalid_Eps" title="DTC_007 - 0x132 转向角无效值0xFFFF，连续10帧，检查DTC C42081" />
+      <capltestcase name="DTC_008_Dtc_SignalInvalid_EpsValidBit" title="DTC_008 - 0x132 转向角有效位无效（0x1），连续10帧，检查DTC C42081" />
+      <capltestcase name="DTC_009_Dtc_SignalInvalid_EpsSpeedValidBit" title="DTC_009 - 0x132 转向角速度有效位无效（0x1），连续10帧，检查DTC C42081" />
+      <capltestcase name="DTC_010_Dtc_SasDlc" title="DTC_010 - 0x132 DLC错误，连续10帧，检查DTC C42081" />
+      <capltestcase name="DTC_BND_CRC_006_Dtc_CrcCycleBoundary_Run" title="DTC_BND_CRC_006 - 0x132 CRC错误，连续10帧，检查DTC C42081"></capltestcase>
+      <capltestcase name="DTC_BND_CNT_006_Dtc_AliveCounterCycleBoundary_Run" title="DTC_BND_CNT_006 - 0x132 COUNT错误，连续10帧，检查DTC C42081"></capltestcase>
+    </testgroup>
+    <testgroup title="11.C45281 - 气囊纵向加速度信号无效">
+      <capltestcase name="DTC_011_Dtc_SignalInvalid_Acu" title="DTC_011 - 0x021 ACU_3纵向加速度有效位VD=2无效，连续10帧，检查DTC C45281" />
+      <capltestcase name="DTC_012_Dtc_SignalInvalid_AcuLateralAcceleration" title="DTC_012 - 0x031 ACU_2横向加速度原始值0xFFFF，连续10帧，检查DTC C45281" />
+      <capltestcase name="DTC_013_Dtc_SignalInvalid_AcuYawRate" title="DTC_013 - 0x031 ACU_2横摆角速度原始值0xFFFF，连续10帧，检查DTC C45281" />
+      <capltestcase name="DTC_014_Dtc_SignalInvalid_AcuLongitudinalAcceleration" title="DTC_014 - 0x021 ACU_3纵向加速度原始值0xFFFF，连续10帧，检查DTC C45281" />
+      <capltestcase name="DTC_015_Dtc_AcuSignalFault_Run" title="DTC_015 - 0x031 任意信号无效，连续10帧，检查DTC C45281"></capltestcase>
+      <capltestcase name="DTC_016_Dtc_AcuDlc_Run" title="DTC_016 - 0x031 DLC错误，连续10帧，检查DTC C45281"></capltestcase>
+      <capltestcase name="DTC_017_Dtc_AcuDlc_Run" title="DTC_017 - 0x021 DLC错误，连续10帧，检查DTC C45281"></capltestcase>
+      <capltestcase name="DTC_BND_CRC_008_Dtc_CrcCycleBoundary_Run" title="DTC_BND_CRC_008 - 0x031 CRC错误，连续10帧，检查DTC C45281"></capltestcase>
+      <capltestcase name="DTC_BND_CRC_010_Dtc_CrcCycleBoundary_Run" title="DTC_BND_CRC_010 - 0x021 CRC错误，连续10帧，检查DTC C45281"></capltestcase>
+      <capltestcase name="DTC_BND_CNT_008_Dtc_AliveCounterCycleBoundary_Run" title="DTC_BND_CNT_008 - 0x031 COUNT错误，连续10帧，检查DTC C45281"></capltestcase>
+      <capltestcase name="DTC_BND_CNT_010_Dtc_AliveCounterCycleBoundary_Run" title="DTC_BND_CNT_010 - 0x021 COUNT错误，连续10帧，检查DTC C45281"></capltestcase>
+    </testgroup>
+    <testgroup title="12.C44481 - 左区域控制器网络信号无效">
+      <capltestcase name="DTC_018_Dtc_LeftZoneSignalInvalid_Run" title="DTC_018 - 0x49D 任意信号无效，连续10帧，检查DTC C44481"></capltestcase>
+      <capltestcase name="DTC_019_Dtc_LeftZoneDlc_Run" title="DTC_019 - 0x49D DLC错误，连续10帧，检查DTC C44481"></capltestcase>
+      <capltestcase name="DTC_020_Dtc_LeftZoneDlc_Run" title="DTC_020 - 0x2AB DLC错误，连续10帧，检查DTC C44481"></capltestcase>
+      <capltestcase name="DTC_021_Dtc_LeftZoneDlc_Run" title="DTC_021 - 0x2BB DLC错误，连续10帧，检查DTC C44481"></capltestcase>
+      <capltestcase name="DTC_BND_CRC_012_Dtc_CrcCycleBoundary_Run" title="DTC_BND_CRC_012 - 0x23B CRC错误，连续10帧，检查DTC C44481"></capltestcase>
+      <capltestcase name="DTC_BND_CRC_014_Dtc_CrcCycleBoundary_Run" title="DTC_BND_CRC_014 - 0x2AB CRC错误，连续10帧，检查DTC C44481"></capltestcase>
+      <capltestcase name="DTC_BND_CRC_016_Dtc_CrcCycleBoundary_Run" title="DTC_BND_CRC_016 - 0x2BB CRC错误，连续10帧，检查DTC C44481"></capltestcase>
+      <capltestcase name="DTC_BND_CNT_012_Dtc_AliveCounterCycleBoundary_Run" title="DTC_BND_CNT_012 - 0x23B COUNT错误，连续10帧，检查DTC C44481"></capltestcase>
+      <capltestcase name="DTC_BND_CNT_014_Dtc_AliveCounterCycleBoundary_Run" title="DTC_BND_CNT_014 - 0x2AB COUNT错误，连续10帧，检查DTC C44481"></capltestcase>
+      <capltestcase name="DTC_BND_CNT_016_Dtc_AliveCounterCycleBoundary_Run" title="DTC_BND_CNT_016 - 0x2BB COUNT错误，连续10帧，检查DTC C44481"></capltestcase>
+    </testgroup>
+    <testgroup title="13.D43681 - 后右角雷达网络信号无效">
+      <capltestcase name="DTC_BND_CRC_018_Dtc_CrcCycleBoundary_Run" title="DTC_BND_CRC_018 - 0x4F7 CRC错误，连续10帧，检查DTC D43681"></capltestcase>
+      <capltestcase name="DTC_022_Dtc_RrcrDlc" title="DTC_022 - 0x4F7 DLC错误，连续10帧，检查DTC D43681" />
+      <capltestcase name="DTC_BND_CNT_018_Dtc_AliveCounterCycleBoundary_Run" title="DTC_BND_CNT_018 - 0x4F7 COUNT错误，连续10帧，检查DTC D43681"></capltestcase>
+    </testgroup>
+    <testgroup title="15.压力测试">
+      <capltestcase name="STRESS_001_PressureTest_Electrical" title="STRESS_001 - 电气检查" />
+      <capltestcase name="STRESS_002_PressureTest_MessageCycle" title="STRESS_002 - 报文周期监控" />
+      <capltestcase name="STRESS_003_PressureTest_SleepWake" title="STRESS_003 - 休眠唤醒循环" />
+      <capltestcase name="STRESS_004_PressureTest_DtcAging" title="STRESS_004 - DTC老化" />
+    </testgroup>  </testgroup>
+</testmodule>

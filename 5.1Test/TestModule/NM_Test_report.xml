@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<testmodule starttime="2026-08-13 15:02:54" timestamp="   0.695749" verdicts="2_basic">
+  <testgroup>
+    <testgroup>
+      <skipped starttime="2026-08-13 15:02:54" timestamp="   0.695749">
+        <title>NM_SESSION_START | 初始化HTML报告和日志</title>
+      </skipped>
+      <title>0.报告与仿真自检</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-08-13 15:02:54" timestamp="   0.695749">
+        <title>T1V-C-NM-TC1-1 | BSM下诊断不唤醒</title>
+      </skipped>
+      <skipped starttime="2026-08-13 15:02:54" timestamp="   0.695749">
+        <title>T1V-C-NM-TC1-2 | BSM下PowerMode ON不唤醒</title>
+      </skipped>
+      <skipped starttime="2026-08-13 15:02:54" timestamp="   0.695749">
+        <title>T1V-C-NM-TC2 | PBSM到RMS: 两帧0x601唤醒</title>
+      </skipped>
+      <skipped starttime="2026-08-13 15:02:54" timestamp="   0.695749">
+        <title>T1V-C-NM-TC3 | RMS到NOS: 诊断保持</title>
+      </skipped>
+      <skipped starttime="2026-08-13 15:02:54" timestamp="   0.695749">
+        <title>T1V-C-NM-TC4 | RMS到NOS: PowerMode保持</title>
+      </skipped>
+      <skipped starttime="2026-08-13 15:02:54" timestamp="   0.695749">
+        <title>T1V-C-NM-TC5 | RMS到RSS</title>
+      </skipped>
+      <title>1.休眠、RMS与NOS状态</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-08-13 15:02:54" timestamp="   0.695749">
+        <title>T1V-C-NM-TC6 | NOS到RSS: DOW 210秒保持</title>
+      </skipped>
+      <testcase starttime="2026-08-13 15:02:54" timestamp="   0.695749">
+        <teststep timestamp="   0.895749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=200ms (max=200ms)</teststep>
+        <teststep timestamp="   4.395749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=3500ms (max=3500ms)</teststep>
+        <teststep timestamp="   7.495749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=3100ms (max=3100ms)</teststep>
+        <teststep timestamp="   7.495749" level="0" type="user" ident="NM 唤醒发送" result="na">周期发送 0x601（周期 200 ms）唤醒雷达；检测到首帧 0x63F 后立即停止。</teststep>
+        <teststep timestamp="   7.515749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=20ms (max=20ms)</teststep>
+        <teststep timestamp="   7.515749" level="0" type="user" ident="停止 0x601" result="pass">检测到首帧 0x63F，响应时间=12.1 ms；0x601 仅作为唤醒源，现已停止。</teststep>
+        <teststep timestamp="   7.515749" level="0" type="user" ident="RMS 阶段" result="na">停止 0x601 后观察 RMS 3000 ms，确认 0x63F 持续发送。</teststep>
+        <teststep timestamp="  10.515749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=3000ms (max=3000ms)</teststep>
+        <teststep timestamp="  10.515749" level="0" type="user" ident="RMS 首帧响应" result="pass">DUT 首帧为 NMm_RLCR（0x63F）。</teststep>
+        <teststep timestamp="  10.515749" level="0" type="user" ident="RMS NM 周期" result="pass">NM 报文=4 帧，周期最小=995.0 ms，最大=1000.0 ms。</teststep>
+        <teststep timestamp="  10.515749" level="0" type="user" ident="RMS 0x63F 持续时长" result="pass">NM 首帧至末帧间隔=2994.9 ms。</teststep>
+        <teststep timestamp="  10.515749" level="0" type="user" ident="RMS 0x63F 标志位" result="pass">0x63F 字段正确：DLC=8，srcNodeID=0x3F，RMR=0，Reserved1=0；唤醒源[ON/0x601(NM)/诊断/DOW]=0/1/0/0；保持状态[ON/诊断/DOW]=0/0/0；Awake_NM=0。</teststep>
+        <teststep timestamp="  10.515749" level="0" type="user" ident="RMS 超时 RSS" result="na">RMS 超时后观察 1200 ms；不应发送 0x63F，0x447/0x450 应继续发送。</teststep>
+        <teststep timestamp="  11.715749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=1200ms (max=1200ms)</teststep>
+        <teststep timestamp="  11.715749" level="0" type="user" ident="RMS 超时后报文输出" result="pass">NM 已停止；应用报文仍在发送：RLCR_1=12，RLCR_2=12。</teststep>
+        <teststep timestamp="  11.715749" level="0" type="user" ident="诊断保持" result="na">RSS 状态发送 0x3E 00，诊断保持 6000 ms；延长 500 ms 采集第 7 帧 0x63F。</teststep>
+        <teststep timestamp="  11.715749" level="0" type="user" ident="诊断发送" result="na">已在 0x743 发送 诊断保持报文（0x3E 00）（0x3E 00）。</teststep>
+        <teststep timestamp="  18.215749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=6500ms (max=6500ms)</teststep>
+        <teststep timestamp="  18.215749" level="0" type="user" ident="诊断保持报文输出" result="pass">DUT NM 报文及两条应用报文均在发送。</teststep>
+        <teststep timestamp="  18.215749" level="0" type="user" ident="诊断保持 NM 周期" result="pass">NM 报文=7 帧，周期最小=999.9 ms，最大=1000.0 ms。</teststep>
+        <teststep timestamp="  18.215749" level="0" type="user" ident="诊断保持 0x63F 标志位" result="pass">0x63F 字段正确：DLC=8，srcNodeID=0x3F，RMR=0，Reserved1=0；唤醒源[ON/0x601(NM)/诊断/DOW]=0/0/0/0；保持状态[ON/诊断/DOW]=0/1/0；Awake_NM=0。</teststep>
+        <teststep timestamp="  18.215749" level="0" type="user" ident="诊断超时 RSS" result="na">诊断保持超时后观察 1200 ms；不应发送 0x63F，0x447/0x450 应继续发送。</teststep>
+        <teststep timestamp="  19.415749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=1200ms (max=1200ms)</teststep>
+        <teststep timestamp="  19.415749" level="0" type="user" ident="诊断超时后报文输出" result="pass">NM 已停止；应用报文仍在发送：RLCR_1=12，RLCR_2=12。</teststep>
+        <verdict time="2026-08-13 15:03:13" timestamp="  19.415749" endtime="2026-08-13 15:03:13" endtimestamp="  19.415749" result="pass" />
+        <title>RMS超时后诊断保持</title>
+        <ident>T1V-C-NM-TC7-1</ident>
+      </testcase>
+      <testcase starttime="2026-08-13 15:03:13" timestamp="  19.415749">
+        <teststep timestamp="  19.615749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=200ms (max=200ms)</teststep>
+        <teststep timestamp="  23.115749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=3500ms (max=3500ms)</teststep>
+        <teststep timestamp="  26.215749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=3100ms (max=3100ms)</teststep>
+        <teststep timestamp="  26.215749" level="0" type="user" ident="NM 唤醒发送" result="na">周期发送 0x601（周期 200 ms）唤醒雷达；检测到首帧 0x63F 后立即停止。</teststep>
+        <teststep timestamp="  26.235749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=20ms (max=20ms)</teststep>
+        <teststep timestamp="  26.255749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=20ms (max=20ms)</teststep>
+        <teststep timestamp="  26.275749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=20ms (max=20ms)</teststep>
+        <teststep timestamp="  26.295749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=20ms (max=20ms)</teststep>
+        <teststep timestamp="  26.315749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=20ms (max=20ms)</teststep>
+        <teststep timestamp="  26.335749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=20ms (max=20ms)</teststep>
+        <teststep timestamp="  26.355749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=20ms (max=20ms)</teststep>
+        <teststep timestamp="  26.375749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=20ms (max=20ms)</teststep>
+        <teststep timestamp="  26.395749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=20ms (max=20ms)</teststep>
+        <teststep timestamp="  26.415749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=20ms (max=20ms)</teststep>
+        <teststep timestamp="  26.435749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=20ms (max=20ms)</teststep>
+        <teststep timestamp="  26.455749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=20ms (max=20ms)</teststep>
+        <teststep timestamp="  26.455749" level="0" type="user" ident="停止 0x601" result="pass">检测到首帧 0x63F，响应时间=236.1 ms；0x601 仅作为唤醒源，现已停止。</teststep>
+        <teststep timestamp="  26.455749" level="0" type="user" ident="RMS 阶段" result="na">停止 0x601 后观察 RMS 3000 ms，确认 0x63F 持续发送。</teststep>
+        <teststep timestamp="  29.455749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=3000ms (max=3000ms)</teststep>
+        <teststep timestamp="  29.455749" level="0" type="user" ident="RMS 首帧响应" result="pass">DUT 首帧为 NMm_RLCR（0x63F）。</teststep>
+        <teststep timestamp="  29.455749" level="0" type="user" ident="RMS NM 周期" result="pass">NM 报文=4 帧，周期最小=999.9 ms，最大=1000.0 ms。</teststep>
+        <teststep timestamp="  29.455749" level="0" type="user" ident="RMS 0x63F 持续时长" result="pass">NM 首帧至末帧间隔=2999.9 ms。</teststep>
+        <teststep timestamp="  29.455749" level="0" type="user" ident="RMS 0x63F 标志位" result="pass">0x63F 字段正确：DLC=8，srcNodeID=0x3F，RMR=0，Reserved1=0；唤醒源[ON/0x601(NM)/诊断/DOW]=0/1/0/0；保持状态[ON/诊断/DOW]=0/0/0；Awake_NM=0。</teststep>
+        <teststep timestamp="  29.455749" level="0" type="user" ident="RMS 超时 RSS" result="na">RMS 超时后观察 1200 ms；不应发送 0x63F，0x447/0x450 应继续发送。</teststep>
+        <teststep timestamp="  30.655749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=1200ms (max=1200ms)</teststep>
+        <teststep timestamp="  30.655749" level="0" type="user" ident="RMS 超时后报文输出" result="pass">NM 已停止；应用报文仍在发送：RLCR_1=12，RLCR_2=12。</teststep>
+        <teststep timestamp="  30.655749" level="0" type="user" ident="ON 保持" result="na">RSS 状态发送 PowerMode=ON，连续观察 8000 ms 并校验 0x63F 标志位。</teststep>
+        <teststep timestamp="  38.655749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=8000ms (max=8000ms)</teststep>
+        <teststep timestamp="  38.655749" level="0" type="user" ident="ON 保持报文输出" result="pass">DUT NM 报文及两条应用报文均在发送。</teststep>
+        <teststep timestamp="  38.655749" level="0" type="user" ident="ON 保持 NM 周期" result="fail">NM 周期超出范围：最小=999.9 ms，最大=1136.0 ms，期望 900..1100 ms。</teststep>
+        <teststep timestamp="  38.655749" level="0" type="user" ident="ON 保持 0x63F 标志位" result="pass">0x63F 字段正确：DLC=8，srcNodeID=0x3F，RMR=0，Reserved1=0；唤醒源[ON/0x601(NM)/诊断/DOW]=0/0/0/0；保持状态[ON/诊断/DOW]=1/0/0；Awake_NM=0。</teststep>
+        <teststep timestamp="  38.855749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=200ms (max=200ms)</teststep>
+        <teststep timestamp="  40.855749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=2000ms (max=2000ms)</teststep>
+        <verdict time="2026-08-13 15:03:34" timestamp="  40.855749" endtime="2026-08-13 15:03:34" endtimestamp="  40.855749" result="fail" />
+        <title>RMS超时后ON保持</title>
+        <ident>T1V-C-NM-TC7-2</ident>
+      </testcase>
+      <testcase starttime="2026-08-13 15:03:34" timestamp="  40.855749">
+        <teststep timestamp="  41.055749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=200ms (max=200ms)</teststep>
+        <teststep timestamp="  44.555749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=3500ms (max=3500ms)</teststep>
+        <teststep timestamp="  47.055749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=2500ms (max=2500ms)</teststep>
+        <teststep timestamp="  47.055749" level="0" type="user" ident="PowerMode 保持报文输出" result="fail">DUT 报文缺失：NM=0，RLCR_1=0，RLCR_2=0。</teststep>
+        <teststep timestamp="  47.055749" level="0" type="user" ident="PowerMode 保持 NM 周期" result="fail">观测到 0 帧 NM 报文；期望至少 2 帧。</teststep>
+        <teststep timestamp="  47.055749" level="0" type="user" ident="PowerMode NOS 0x63F 状态位" result="fail">未采集到 0x63F（NMm_RLCR），无法校验状态位。</teststep>
+        <teststep timestamp="  47.055749" level="0" type="user" ident="TC8到TC9设防" result="na">发送 PowerMode=OFF 和设防信号，停止 0x49D 后检测应用报文静默。</teststep>
+        <teststep timestamp="  47.255749" level="1" type="auto" ident="Resume reason" result="na">Elapsed time=200ms (max=200ms)</teststep>
+        <!-- Measurement stop forced. Test is incomplete! -->
+        <verdict time="2026-08-13 15:03:41" timestamp="  47.055749" endtime="2026-08-13 15:03:42" endtimestamp="  47.255749" result="fail" />
+        <title>RSS到NOS: PowerMode保持</title>
+        <ident>T1V-C-NM-TC8</ident>
+        <extendedinfo type="html"><![CDATA[<b>Measurement stop forced. Test is incomplete!</b>]]></extendedinfo>
+      </testcase>
+      <title>2.RSS、PBSM与总线休眠</title>
+    </testgroup>
+    <title>NM网络管理测试</title>
+  </testgroup>
+  <verdict time="2026-08-13 15:03:32" timestamp="  38.655749" endtime="2026-08-13 15:03:42" endtimestamp="  47.255749" result="fail" />
+  <title>NM网络管理测试</title>
+  <description>依据 T1V-C 网络管理测试用例实现。NM_Test.can 独立发送 0x601；仅在 PowerMode、DOW 或设防清理步骤发送 0x49D。执行时关闭其他节点的同报文仿真。</description>
+  <testlogfiles>
+    <testlogfile file="..\ReportAndLog\2026_08_13_14_32_06\LogFiles\NM_Test_AllCases.blf" logbegin="Active at test start" logend="Active at test end" />
+  </testlogfiles>
+  <engineer>
+    <xinfo>
+      <name>Windows Login Name</name>
+      <description>BLWH-BK-0153</description>
+    </xinfo>
+  </engineer>
+  <testsetup>
+    <xinfo>
+      <name>Version</name>
+      <description>CANoe.ISO11783.J1939.CANopen.CAN.LIN.MOST.FlexRay.J1587.Ethernet.Car2x.AFDX.A429.AMD/XCP.Scope /pro 12.0.221 (SP6)</description>
+    </xinfo>
+    <xinfo>
+      <name>Configuration</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_UDS Project _ICE\T1V_ICE.cfg</description>
+    </xinfo>
+    <xinfo>
+      <name>Database D01_PT车_ Private_CANFD_RLCR_ADCC 20240904 on CAN2</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_UDS Project _ICE\Dbc\旧\D01_PT车_ Private_CANFD_RLCR_ADCC 20240904.dbc (2026-07-01 10:58:58)</description>
+    </xinfo>
+    <xinfo>
+      <name>Database D01_PT车_ Private_CANFD_RRCR_ADCC 20240904 on CAN2</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_UDS Project _ICE\Dbc\旧\D01_PT车_ Private_CANFD_RRCR_ADCC 20240904.dbc (2025-12-01 09:14:34)</description>
+    </xinfo>
+    <xinfo>
+      <name>Database EEA(5.1)_Message_List_version3.1_FL_DA_CANFD_RLCR_20260730174343 on CAN1</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_UDS Project _ICE\Dbc\EEA(5.1)_Message_List_version3.1_FL_DA_CANFD_RLCR_20260730174343.dbc (2026-08-12 17:33:22)</description>
+    </xinfo>
+    <xinfo>
+      <name>Database EEA(5.1)_Message_List_version3.1_FL_DA_CANFD_RRCR_20260730174343 on CAN1</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_UDS Project _ICE\Dbc\EEA(5.1)_Message_List_version3.1_FL_DA_CANFD_RRCR_20260730174343.dbc (2026-08-03 14:15:33)</description>
+    </xinfo>
+    <xinfo>
+      <name>Diagnostic Description of FactoryCalib</name>
+      <description>Base_Variant, en-US, D:\捷图T1V雷达\3.测试工程\T1V_UDS Project _ICE\Cdd\Factory_Calib.cdd</description>
+    </xinfo>
+    <xinfo>
+      <name>Diagnostic Description of T1V_C_RLCR</name>
+      <description>Base_Variant, en-US, D:\捷图T1V雷达\3.测试工程\T1V_UDS Project _ICE\Cdd\T1V-C_RLCR.cdd</description>
+    </xinfo>
+    <xinfo>
+      <name>Test Module Name</name>
+      <description>NM_Test</description>
+    </xinfo>
+    <xinfo>
+      <name>Test Module File</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_UDS Project _ICE\Code\5.1Test\TestModule\NM_Test.xml</description>
+    </xinfo>
+    <xinfo>
+      <name>Last modification of Test Module File</name>
+      <description>2026-08-13, 14:42:50</description>
+    </xinfo>
+    <xinfo>
+      <name>Test Module Library (CAPL)</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_UDS Project _ICE\Code\5.1Test\TestModule\NM_Test.can</description>
+    </xinfo>
+    <xinfo>
+      <name>Windows Computer Name</name>
+      <description>BLWH-BK-0153</description>
+    </xinfo>
+    <xinfo>
+      <name>Nodelayer Module J1939TestServiceLibraryNL</name>
+      <description>J1939 Test Service Library for CANoe, Version 12.0.221.0, C:\Program Files\Vector CANoe 12.0\Exec32\J1939TestServiceLibraryNL.dll</description>
+    </xinfo>
+    <xinfo>
+      <name>Nodelayer Module CANOEILNLVECTOR</name>
+      <description>CANoe Interaction Layer NL (Vector) Version 3.17.66 (Jan 30 2019 12:34:12) , C:\Program Files\Vector CANoe 12.0\Exec32\CANOEILNLVECTOR.DLL</description>
+    </xinfo>
+  </testsetup>
+  <hardware name="CAN Channel Interfaces" category="CategoryCANIF">
+    <xinfoset type="device">
+      <xinfoobject type="device">
+      <xinfo key="channel">
+        <name>Channel</name>
+        <description>1</description>
+      </xinfo>
+      <xinfo key="device">
+        <name>Device</name>
+        <description>VN1610</description>
+      </xinfo>
+      <xinfo key="serialnumber">
+        <name>Serial number</name>
+        <description>51380</description>
+      </xinfo>
+      <xinfo key="driverdllversion">
+        <name>Driver DLL version</name>
+        <description>11.2.20</description>
+      </xinfo>
+      <xinfo key="driverversion">
+        <name>Driver version</name>
+        <description>10.9.12</description>
+      </xinfo>
+      </xinfoobject>
+      <xinfoobject type="device">
+      <xinfo key="channel">
+        <name>Channel</name>
+        <description>2</description>
+      </xinfo>
+      <xinfo key="device">
+        <name>Device</name>
+        <description>VN1610</description>
+      </xinfo>
+      <xinfo key="serialnumber">
+        <name>Serial number</name>
+        <description>51380</description>
+      </xinfo>
+      <xinfo key="driverdllversion">
+        <name>Driver DLL version</name>
+        <description>11.2.20</description>
+      </xinfo>
+      <xinfo key="driverversion">
+        <name>Driver version</name>
+        <description>10.9.12</description>
+      </xinfo>
+      </xinfoobject>
+    </xinfoset>
+  </hardware>
+  <extendedinfo type="html"><![CDATA[<b>Measurement stop forced. Test is incomplete!</b>]]></extendedinfo>
+</testmodule>
+<!--footprint="848bd3ddc7b42fb9ed167db9d0a5d569" version="1"-->

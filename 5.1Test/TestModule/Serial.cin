@@ -1,0 +1,421 @@
+/*@!Encoding:936*/
+variables
+{
+  const int SERIAL_BUFFER_SIZE = 1024;
+  struct SERIALBUFFER
+  {
+    byte buffer[SERIAL_BUFFER_SIZE];
+    int  startIndex;
+    int  length;
+  };
+  char termChars[long];
+  byte enableTermChars[long];
+  byte[SERIAL_BUFFER_SIZE] serialBufHandle[long];
+  struct SERIALBUFFER serialBuffer[long];
+  //int  serBufferSize[long];
+  //int  serBufferStart[long];
+  
+  const int TX_BUFFER_SIZE = 1024;
+  const int TX_COMMAND_MAX = 20;
+  struct TXBUFFER
+  {
+    byte buffer[SERIAL_BUFFER_SIZE];
+    int cmdCount;
+    int cmdLength[TX_COMMAND_MAX];
+    int totalLength;
+    int close;
+  };
+  struct TXBUFFER TXBUFFERFORNETWORKNODE[long];
+  msTimer txBufferTimer;
+  byte txBufferTimerStart = 0;
+}
+
+on timer txBufferTimer
+{
+  int i;
+  struct TXBUFFER buf;
+  byte str[256];
+  for(long port : TXBUFFERFORNETWORKNODE)
+  {
+    if(TXBUFFERFORNETWORKNODE[port].cmdCount > 0)
+    {
+      memcpy(buf, TXBUFFERFORNETWORKNODE[port]);
+      memcpy(str, buf.buffer, buf.cmdLength[0]);
+      str[buf.cmdLength[0]+1]=0;
+      //write("Send:\"%s\"", str);
+      rs232Send(port, str, buf.cmdLength[0]);
+      buf.cmdCount--;
+      for(i=0;i<buf.totalLength-buf.cmdLength[0];i++)
+        buf.buffer[i] = buf.buffer[i+buf.cmdLength[0]];
+      buf.totalLength -= buf.cmdLength[0];
+      for(i=0;i<buf.cmdCount;i++)
+        buf.cmdLength[i] = buf.cmdLength[i+1];
+      memcpy(TXBUFFERFORNETWORKNODE[port], buf);
+    }
+    if(TXBUFFERFORNETWORKNODE[port].close == 1)
+    {
+      memcpy(buf, TXBUFFERFORNETWORKNODE[port]);
+      buf.cmdCount = 0;
+      buf.totalLength = 0;
+      buf.close = 2;
+      memcpy(TXBUFFERFORNETWORKNODE[port], buf);
+    }
+    else if(TXBUFFERFORNETWORKNODE[port].close == 2)
+    {
+      TxBuffer_Close(port);
+    }
+  }
+}
+
+void TxBuffer_Init(dword port)
+{
+  TXBUFFERFORNETWORKNODE[port].cmdCount = 0;
+  TXBUFFERFORNETWORKNODE[port].totalLength = 0;
+  TXBUFFERFORNETWORKNODE[port].close = 0;
+  if(txBufferTimerStart == 0)
+  {
+    setTimerCyclic(txBufferTimer, 100);
+    txBufferTimerStart = 1;
+  }
+}
+
+void TxBuffer_Push(dword port, byte cmd[], dword size)
+{
+  int i;
+  struct TXBUFFER buf;
+  if(TXBUFFERFORNETWORKNODE[port].cmdCount < TX_COMMAND_MAX && (TXBUFFERFORNETWORKNODE[port].totalLength + size < TX_BUFFER_SIZE) )
+  {
+    memcpy(buf, TXBUFFERFORNETWORKNODE[port]);
+    for(i=0;i<size;i++)
+      buf.buffer[buf.totalLength+i] = cmd[i];
+    buf.cmdLength[buf.cmdCount] = size;
+    buf.cmdCount++;
+    buf.totalLength += size;
+//    for(i=0;i<buf.totalLength;i++)
+//      write("Buffer[%d] = \"%c\"", i, buf.buffer[i]);
+    memcpy(TXBUFFERFORNETWORKNODE[port], buf);
+  }
+}
+
+void TxBuffer_Close(dword port)
+{
+  SerialCloseAction(port);
+  TXBUFFERFORNETWORKNODE.remove(port);
+  if(TXBUFFERFORNETWORKNODE.size() == 0)
+  {
+    cancelTimer(txBufferTimer);
+    txBufferTimerStart = 0;
+  }
+}
+
+int SerialInit(dword port, dword baudrate, dword numberOfDataBits, dword numberOfStopBits, dword parity, byte enableTerm,char termChar)
+{
+  dword res;
+  res = rs232Open(port);
+  if(res==0)
+  {
+    write("rs232Open -> 串口%d打开失败！", port);
+    return -1;
+  }
+  else 
+  {
+    res = rs232Configure(port, baudrate, numberOfDataBits, numberOfStopBits, parity);
+    if(res==0)
+    {
+      rs232Close(port);
+      write("rs232Configure -> 串口%d配置失败！", port);
+      return -2;
+    }
+  }
+  
+  #if !TEST_NODE
+  TxBuffer_Init(port);
+  #endif
+  
+  rs232Receive(port, serialBufHandle[port], SERIAL_BUFFER_SIZE);
+  termChars[port] = termChar;
+  enableTermChars[port] = (enableTerm == 0 ? 0 : 1);
+  serialBuffer[port].startIndex = 0;
+  serialBuffer[port].length = 0;
+  
+  return 0;
+}
+
+
+int SerialSendData(dword port, byte buffer[], dword size)
+{
+  #if TEST_NODE
+  if(rs232Send(port, buffer, size) == 0)
+    return -1;
+  #else
+  TxBuffer_Push(port, buffer, size);
+  #endif
+  return 0;
+}
+
+int SerialSendData(dword port, char buffer[], dword size)
+{
+  byte newbuffer[1024];
+  int i;
+  for(i=0;i<size;i++)
+    newbuffer[i] = buffer[i];
+  return SerialSendData(port, newbuffer, size);
+}
+
+int SerialReceiveData(dword port, char buffer[], dword size, dword timeout_ms)
+{
+  byte tmp[1024];
+  int ret, i;
+  ret = SerialReceiveData(port, tmp, size, timeout_ms);
+  for(i=0;i<ret;i++)
+    buffer[i] = tmp[i];
+  if(ret >= 0)
+    buffer[ret] = 0;
+  str_replace(buffer, "\r", "\\r");
+  str_replace(buffer, "\n", "\\n");
+  return ret;
+}
+
+
+int SerialReceiveData(dword port, byte buffer[], dword size, dword timeout_ms)
+{
+  dword stTime;
+  byte flag;
+  int i, ret, index;
+  struct SERIALBUFFER tempBuffer;
+  byte result[SERIAL_BUFFER_SIZE];
+  /*
+  #if MEASUREMENT_SETUP
+  write("MEASUREMENT_SETUP");
+  #endif
+  #if SIMULATION
+  write("SIMULATION");
+  #endif
+  #if ANALYSIS
+  write("ANALYSIS");
+  #endif
+  #if TEST_NODE
+  write("TEST_NODE");
+  #endif
+  #if ANALYSIS
+  write("CANOE");
+  #endif//*/
+  #if TEST_NODE
+  stTime = timeNow();
+  if(enableTermChars[port] == 1)
+  {
+    flag = 0;
+    while(1)
+    {
+      memcpy(tempBuffer, serialBuffer[port]);
+      index = tempBuffer.startIndex;
+      for(i=0;i<tempBuffer.length;i++)
+      {
+        result[i] = tempBuffer.buffer[(index+i)%SERIAL_BUFFER_SIZE];
+        if(result[i] == termChars[port])
+        {
+          memcpy(buffer, result, i+1);
+          tempBuffer.length -= (i+1);
+          if(tempBuffer.length == 0)
+            tempBuffer.startIndex = 0;
+          else
+            tempBuffer.startIndex = (index+i+1)%SERIAL_BUFFER_SIZE;
+          memcpy(serialBuffer[port], tempBuffer);
+          return (i+1);
+        }
+      }
+      testWaitForTimeout(10);
+      if((timeNow()-stTime)>timeout_ms*100)
+        return -2;
+    }
+  }
+  else
+  {
+    testwaitfortimeout(timeout_ms);
+    memcpy(tempBuffer, serialBuffer[port]);
+    index = tempBuffer.startIndex;
+    if(tempBuffer.length <= 0)
+      return -2;
+    else if(tempBuffer.length <= size)
+    {
+      for(i=0;i<tempBuffer.length;i++)
+        buffer[i] = tempBuffer.buffer[(index+i)%SERIAL_BUFFER_SIZE];
+      serialBuffer[port].length = 0;
+      serialBuffer[port].startIndex = 0;
+      return tempBuffer.length;
+    }
+    else
+    {
+      for(i=0;i<size;i++)
+        buffer[i] = tempBuffer.buffer[(index+i)%SERIAL_BUFFER_SIZE];
+      tempBuffer.length -= size;
+      tempBuffer.startIndex = (index+size)%SERIAL_BUFFER_SIZE;
+      return size;
+    }
+  }
+  #endif
+  return 0;
+}
+
+int SerialCommandAndResponse(dword port, byte command[], dword cmdSize, byte response[], dword respSize, dword timeout_ms)
+{
+  int ret;
+  ret = SerialSendData(port, command, cmdSize);
+  if(ret != 0)
+    return -1;
+  ret = SerialReceiveData(port, response, respSize, timeout_ms);
+  if(ret < 0)
+    return -2;
+  return ret;
+}
+
+int SerialCommandAndResponse(dword port, char command[], dword cmdSize, char response[], dword respSize, dword timeout_ms)
+{
+  int ret, i;
+  byte tmp[1024];
+  for(i=0;i<cmdSize;i++)
+    tmp[i] = command[i];
+  ret = SerialCommandAndResponse(port, tmp, cmdSize, tmp, respSize, timeout_ms);
+  for(i=0;i<ret;i++)
+    response[i] = tmp[i];
+  if(ret >= 0)
+    response[ret] = 0;
+  return ret;
+}
+
+
+int SerialClearBuffer(dword port)
+{
+  if(serialBuffer.containsKey(port) == 0)
+    return -1;
+  serialBuffer[port].length = 0;
+  serialBuffer[port].startIndex = 0;
+  return 0;
+}
+
+int SerialClosePort(dword port)
+{
+  int ret;
+  #if !TEST_NODE
+  struct TXBUFFER buf;
+  #endif
+  
+  ret = 0;
+  #if TEST_NODE
+  ret = SerialCloseAction(port);
+  #else
+  memcpy(buf, TXBUFFERFORNETWORKNODE[port]);
+  buf.close = 1;
+  memcpy(TXBUFFERFORNETWORKNODE[port], buf);
+  #endif
+  return ret;
+}
+
+int SerialCloseAction(dword port)
+{
+  int ret;
+  if(rs232Close(port) == 0)
+    ret =  -1;
+  else
+    ret = 0;
+  termChars.remove(port);
+  enableTermChars.remove(port);
+  serialBuffer.remove(port);
+  write("COM%d Closed.", port);
+  return ret;
+}
+
+/// <rs232 Call back>
+RS232OnError(dword port, dword errorFlags)
+{
+   // Write error details to the Write Window
+   Write("%gms: Error occurred on COM%d(Error code: %d).", timeNow()/100.0, port, errorFlags);
+}
+/// <rs232 Call back>
+//这里注意CALLBACK的函数,RS一定要大写，可以看rs232Receive的使用说明的时候，关注这一细节
+RS232OnReceive(dword port, byte buffer[], dword number )
+{
+  int i,j, index, length;
+  struct SERIALBUFFER tempBuffer;
+  char string[1024];
+  if(number>0)//表示收到的串口回复数据长度不为0
+  {
+   gLastReceiveLength=number;//取每次收到的串口返回数据长度
+   for(j=0;j<number;j++)
+  {  
+    gReceivedBuffer[j]=buffer[j];
+   // write("%.0fms -> gReceivedBuffer[%d]:0x%02x",timeNowFloat()/100.0,j,gReceivedBuffer[j]);   
+   }
+  if(j>0)//加了个缓存的buffer,一定程度上可以解决串口数据同步的问题，但不是百分百，所以后续还是考虑只判断有无串口响应，不具体到字段有无错误
+  {
+    for(j=0;j<number;j++)
+    {
+      gReceivedBuffertemp[j]=gReceivedBuffer[j];
+      if(gReceivedBuffertemp[j]>=0X7F &&gReceivedBuffertemp[j]<=0X20)
+      {
+        //write("RS232OnReceive %.0fms ->gReceivedBuffertemp[%d]:0x%02x",timeNowFloat()/100.0,j,gReceivedBuffertemp[i]);
+      }
+      else
+      {
+       //write("RS232OnReceive %.0fms ->gReceivedBuffertemp[%d]:%c",timeNowFloat()/100.0,j,gReceivedBuffertemp[i]); 
+      }
+     }
+   }
+  testSupplyTextEvent(gSerialReceivedData);
+  }
+ // write("containskey(port%d)=%d",port,serialBuffer.containsKey(port));
+  if(serialBuffer.containsKey(port) == 0) return;
+  
+  memcpy(tempBuffer, serialBuffer[port]);
+  index = tempBuffer.startIndex;
+  length = tempBuffer.length;
+  index = (index + length)%SERIAL_BUFFER_SIZE;
+  for(i=0; i<number; ++i)
+  {
+    tempBuffer.buffer[index] = buffer[i];
+    index = (index + 1)%SERIAL_BUFFER_SIZE;
+  }
+  length += number;
+  if(length > SERIAL_BUFFER_SIZE)
+  {
+    length = SERIAL_BUFFER_SIZE;
+    tempBuffer.startIndex = index;
+  }
+  tempBuffer.length = length;
+  memcpy(serialBuffer[port], tempBuffer);
+  for(i=0;i<number;i++)
+    string[i] = buffer[i];
+  string[i] = 0;
+  str_replace(string, "\r", "\\r");
+  str_replace(string, "\n", "\\n");
+ // write("%gms: \"%s\" received on port %d", timeNow()/100.0, string, port);
+ // write("rs232:index=%d",serialBuffer[port].startIndex);
+}
+/// <rs232 Call back>
+RS232OnSend(dword port, byte buffer[], dword number)
+{
+  long i;
+  char string[256];//字符的类型
+  byte SendByte[256];//字节的类型
+  testSupplyTextEvent(gSerialSendData);
+  for(i=0; i<elcount(buffer); ++i)
+  {
+    SendByte[i] = buffer[i];
+    if(SendByte[i]>=0x7F&&SendByte[i]<=0x20)//这个范围内不是单字节符或无法显示出来
+    {
+      // write("%.0fms -> 发送数据：SendData[%d]:0x%02X", timeNowfloat()/100.0,i,SendByte[i]);
+    }
+    else//这个范围内的字符是可以打印显示出来的
+    {
+    //  write("%.0fms -> 发送数据：SendData[%d]:%c", timeNowfloat()/100.0,i,SendByte[i]); 
+     // Create a string from the given byte array
+     string[i] = buffer[i];
+    }
+  }
+   string[number] = 0;
+
+  // Write sent data to the Write Window
+  // Write("%gms: Sent '%s' (%d bytes) on COM%d.", timeNow()/100.0, string, number, port);
+  
+  }
+

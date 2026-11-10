@@ -1,0 +1,2958 @@
+/*@!Encoding:936*/
+includes
+{
+  #include "ITechPowerControl.cin"
+}
+
+variables
+{
+  // 当前激活的测试模式
+  const int MODE_NONE            = 0;      // 无模式
+  const int MODE_ELECTRICAL      = 1;      // 电检模式
+  const int MODE_MSG_CYCLE       = 2;      // 消息周期监控模式
+  const int MODE_SUSPEND_RESUME  = 3;      // 测试模式
+  const int MODE_DTC_AGING       = 4;      // DTC老化测试模式
+
+  int gActiveMode = MODE_NONE;             // 全局当前模式
+
+  // 公共动作层变量：用于把休眠唤醒压测和DTC老化共用的电源/Arming/0x601动作集中管理。
+  // pwrOwner表示当前是谁在使用公共动作层，pwrAction表示正在执行唤醒还是休眠。
+  // ================== Common power cycle 公共休眠唤醒动作层 ==================
+  const int PWR_OWNER_NONE           = 0;
+  const int PWR_OWNER_SUSPEND_RESUME = 1;
+  const int PWR_OWNER_DTC_AGING      = 2;
+
+  const int PWR_ACTION_NONE  = 0;
+  const int PWR_ACTION_WAKE  = 1;
+  const int PWR_ACTION_SLEEP = 2;
+
+  message CAN1.* pwrMsg601;
+  message FL_DA_CANFD_RLCR::FLZCU_9 pwrMsg49D;
+  msTimer pwrSend601Timer;
+  msTimer pwrWakePowerModeTimer;
+  msTimer pwrWakeArmingTimer;
+  msTimer pwrWakeDoneTimer;
+  msTimer pwrSleepArmingTimer;
+  msTimer pwrSleepNodeOffTimer;
+  msTimer pwrSleepDoneTimer;
+
+  byte pwrOwner = PWR_OWNER_NONE;
+  byte pwrAction = PWR_ACTION_NONE;
+  byte pwrPurpose = 0;
+  byte pwrIs601Sending = 0;
+  long pwrSend601IntervalMs = 100;
+  long pwrWakePowerModeDelayMs = 50;
+  long pwrWakeArmingDelayMs = 20;
+  long pwrWakeStableMs = 1000;
+  long pwrSleepArmingDelayMs = 50;
+  long pwrSleepNodeOffDelayMs = 100;
+  long pwrSleepDoneDelayMs = 15000;
+  
+  
+  byte gPwrUseItechPower = 0;  // 1: enable ITECH power, 0: do not start it
+  int gPwrItechPowerPort = 0;  // Fill in the ITECH serial port number here
+  byte gPwrItechPowerReady = 0;  // 1: initialized successfully
+  
+  const float PWR_VOLTAGE_NOMINAL = 12.0;  // 初始/恢复电压
+  const float PWR_VOLTAGE_LOW = 8.0;       // 最低电压
+  const float PWR_VOLTAGE_HIGH = 17.0;     // 最高电压
+
+  
+  const long PWR_VOLTAGE_FLUCTUATION_INTERVAL_MS = 1500; // 波动周期 
+  // 电检变量：按DID列表顺序发22服务读取数据，与elecExpectedData中的预期值逐字节比较。
+  // ================== Electrical inspection 电检相关变量 ==================
+  message 0x743 elecTxMsg;
+  const long ELEC_CYCLE_MS = 6000;
+  long elecDidList[7] = {0xF180, 0xF187, 0xF189, 0xF089, 0xF013, 0xF18A, 0xF190};
+  int  elecDidLen[7]  = {32, 16, 24, 24, 16, 10, 17};
+  byte elecExpectedData[7][64];
+  byte elecReadData[7][64];
+  int  elecCurrentIndex = 0;
+  int  elecTotalPass = 1;
+  int  elecCount = 0;
+  int  elecErrorCount = 0;
+  int  elecDataStart = 5;
+  int  elecExist = 0;
+  word elecRespDid = 0;
+  word elecDid = 0;
+  msTimer elecStartTimer;
+  msTimer elecWaitTimer;
+  msTimer elecLoopTimer;
+  long elecErrorDidList[50];
+  char elecTempStr[64];
+  char elecBuf[512];
+  char elecTmp[8];
+
+  // 消息周期监控变量：保存被监控ID、预期周期、上次接收时间和累计错误数。
+  // ================== msg_cycle 消息周期监控相关变量 ==================
+  int msgMonitoringActive = 0;
+  double msgLastTime[100];
+  double msgExpectedPeriod[100];
+  int msgIdMap[100];
+  int msgCount = 0;
+  int msgErrCount = 0;
+  double msgCurrentTime = 0;
+  double msgExpected = 0;
+  double msgTolerance = 0;
+  double msgDeviation = 0;
+  double msgActualPeriod = 0;
+
+  // 休眠唤醒压测变量：负责目标报文监控、睡眠阶段非法报文检查和测试轮次统计。
+  // ================== Suspend and resume 休眠唤醒测试相关变量 ==================
+  msTimer srCycleTimer;
+  msTimer srSleepPhaseMonitorTimer;
+  msTimer srMonitorTimer;
+  msTimer srWakeMonitorDelayTimer;
+  dword srLogFileHandle = 0;
+  byte srWorkState = 1;
+  byte srIsMonitoring = 0;
+  byte srIsSleepPhase = 0;
+  byte srSleepIllegalMessageDetected = 0;
+  byte srTestEnabled = 0;
+  int srTestCount = 0;
+  double srCurrentTime = 0;
+  int srAllDetected = 1;
+  int srAnyDetected = 0;
+  const int SR_MAX_MONITOR_IDS = 8;
+  int srTargetMsgIds[SR_MAX_MONITOR_IDS] =
+  {
+    0x447, 0x450, 0x58F, 0x63F, 
+    0x4F3, 0x4F7, 0x594, 0x640
+  };
+  char srTargetMsgNames[SR_MAX_MONITOR_IDS][32] =
+  {
+    "RLCR_1", "RLCR_2", "RLCR_RemoteDiag", "NMm_RLCR",
+    "RRCR_1", "RRCR_2", "RRCR_RemoteDiag", "NMm_RRCR"
+  };
+  byte srTargetMsgDetected[SR_MAX_MONITOR_IDS];
+  long srTargetMsgCount[SR_MAX_MONITOR_IDS];
+  double srTargetMsgFirstTime[SR_MAX_MONITOR_IDS];
+  double srTargetMsgLastTime[SR_MAX_MONITOR_IDS];
+  int srMonitorIdCount = 8;
+  const int SR_WAKEUP_DURATION_MS = 7000;
+  const int SR_WAKEUP_MONITOR_DELAY_MS = 1000;
+  const int SR_SLEEP_DURATION_MS = 13000;
+  const int SR_MONITOR_CHECK_INTERVAL = 50;
+  const int SR_ECU_SLEEP_WAIT_MS = 7000;
+  const int SR_SLEEP_MONITOR_DURATION = 4000;
+  char srLogBuffer[512];
+  char stressLogText[512];
+
+  // ================== DTC aging DTC老化测试相关变量 ==================
+  message 0x743 dtcDiagTxMsg;
+  msTimer dtcFaultObserveTimer;
+  msTimer dtcUdsTimer;
+  msTimer dtcSleepVerifyStartTimer;
+
+  // 老化状态说明：只描述当前正在等哪一步响应，用于防止旧响应或串响应误推进流程。
+  // WAIT_14_CLEAR：等待14清故障响应；WAIT_FAULT_OBSERVE：故障注入后的观察窗口。
+  // WAIT_190209：读取DTC列表；WAIT_1906_BASE：读取基线老化计数；WAIT_1906_AFTER_WAKE：每轮唤醒后读取老化计数。
+  const int DTC_STATE_IDLE                    = 0;
+  const int DTC_STATE_WAIT_14_CLEAR          = 2;
+  const int DTC_STATE_WAIT_FAULT_OBSERVE     = 3;
+  const int DTC_STATE_WAIT_190209            = 5;
+  const int DTC_STATE_WAIT_1906_BASE         = 6;
+  const int DTC_STATE_WAIT_1906_AFTER_WAKE   = 8;
+
+  // 唤醒目的说明：BUILD_DTC用于第一次制造DTC；READ_AGING用于后续每轮读取老化计数或最终确认。
+  const int DTC_PURPOSE_BUILD_DTC  = 0;
+  const int DTC_PURPOSE_READ_AGING = 1;
+
+  // 诊断请求类型说明：dtcPendingReq记录当前正在等待哪个UDS服务的响应。
+  // 收到0x7C3响应后，会按这个值分发到14、19 02 09或19 06的处理函数。
+  const int DTC_REQ_NONE   = 0;
+  const int DTC_REQ_14     = 2;
+  const int DTC_REQ_190209 = 3;
+  const int DTC_REQ_1906   = 4;
+
+  // 运行状态变量：这些变量决定老化流程处于哪一轮、是否已制造DTC、是否进入最终清除确认。
+  byte dtcTestRunning = 0;
+  byte dtcWakePurpose = DTC_PURPOSE_BUILD_DTC;
+  byte dtcDtcBuilt = 0;
+  byte dtcFinalClearCheckPending = 0;
+  byte dtcClearVerifyPending = 0;
+  byte dtcAgingNormalStopRequested = 0;
+  int dtcState = DTC_STATE_IDLE;
+  int dtcPendingReq = DTC_REQ_NONE;
+  byte dtcP2Extended = 0;
+  byte dtcLastNrc = 0x00;
+
+  // 老化目标配置：目标DTC、扩展记录号、当前老化计数字节位置，以及不匹配时是否只观察。
+  // DTC_AGING_OBSERVE_ONLY=1只打印警告继续跑；=0打印错误并停止测试。
+  dword dtcTargetDtc = 0xC12987;
+  byte dtcExtRecordNum = 0x02;
+  int dtcCurrentAgingPos = 1;
+  const int DTC_AGING_OBSERVE_ONLY = 0;
+  const int DTC_AGING_NEED_TIMES = 10;
+  const int DTC_AGING_TOTAL_LOOP_TIMES = 11;
+
+  // 老化计数记录：completed表示当前大循环内已读取19 06的轮次，loopFinish表示完整大循环次数。
+  // baseline为第一次19 06读到的基线计数，current为当前响应中解析出的老化计数。
+  int dtcCompletedAgingCycles = 0;
+  int dtcLoopFinishCount = 0;
+  byte dtcBaselineCurrentAging = 0xFF;
+  byte dtcCurrentAgingValue = 0xFF;
+  byte dtcTargetDtcFound = 0;
+  byte dtcTargetDtcStatus = 0x00;
+  byte dtcSleepVerifyActive = 0;
+  byte dtcSleepIllegalMessageDetected = 0;
+  dword dtcSleepIllegalMessageId = 0x000;
+  // 时间参数：唤醒稳定后再发诊断；休眠等待后再唤醒；P2/P2*用于UDS响应超时判定。
+  const int DTC_WAKE_STABLE_MS = 1000;
+  const long DTC_SLEEP_WAIT_MS = 15000;
+  const int DTC_SLEEP_VERIFY_WINDOW_MS = 2000;
+  const int DTC_FAULT_INJECT_MS = 5000;
+  const int DTC_FAULT_OBSERVE_MS = 8000;
+  const int DTC_UDS_P2_MS = 1000;
+  const int DTC_UDS_P2_STAR_MS = 5000;
+  const int DTC_ISOTP_N_CR_MS = 1000;
+
+  // ISO-TP接收缓存：用于把单帧或多帧0x7C3诊断响应组完整后再交给UDS解析。
+  byte dtcIsoTpBuf[512];
+  int dtcIsoTpLen = 0;
+  int dtcIsoTpPos = 0;
+  int dtcIsoTpTargetLen = 0;
+  byte dtcIsoTpWaitingCf = 0;
+  byte dtcIsoTpNextSn = 1;
+
+  // 19 06扩展记录缓存：保存正响应中DTC状态后的扩展记录数据，用来读取当前老化计数字节。
+  byte dtc1906Data[256];
+  int dtc1906DataLen = 0;
+  char dtcLogText[512];
+
+
+  // 压力测试状态缓存供当前测试用例轮询写入HTML报告。
+  const int DTC_FAULT_PRESSURE_STATUS_INFO = 0;
+  const int DTC_FAULT_PRESSURE_STATUS_PASS = 1;
+  const int DTC_FAULT_PRESSURE_STATUS_FAIL = 2;
+
+  char gDtcFaultPressureStatusText[1024];
+  long gDtcFaultPressureStatusResult = DTC_FAULT_PRESSURE_STATUS_INFO;
+  long gDtcFaultPressureStatusSequence = 0;
+  int dtcAgingStopKeepLastStatus = 0;
+}
+
+// ================== Electrical inspection 相关函数 ==================
+// 压力测试不创建独立日志文件，也不向 Write 窗口输出逐周期过程日志。
+void StressWriteLog(char logStr[])
+{
+}
+
+// 功能：向Stresstest面板输出一行文字，缺少换行时自动补换行。
+void StressPutPanelLine(char logStr[])
+{
+  char panelText[1024];
+  int logLen;
+
+  logLen = strlen(logStr);
+  if ((logLen > 0) &&
+      ((logStr[logLen - 1] == 0x0A) || (logStr[logLen - 1] == 0x0D)))
+  {
+    snprintf(panelText, elCount(panelText), "%s", logStr);
+  }
+  else
+  {
+    snprintf(panelText, elCount(panelText), "%s\n", logStr);
+  }
+
+  putValueToControl("Stresstest", "CAPL Output View 1", panelText);
+}
+
+// Pushes one pressure-test process result to the active test case for HTML reporting.
+void DtcFaultControllerPublishPressureStatus(int statusResult, char statusText[])
+{
+  snprintf(gDtcFaultPressureStatusText,
+           elCount(gDtcFaultPressureStatusText),
+           "%s",
+           statusText);
+  gDtcFaultPressureStatusResult = statusResult;
+  gDtcFaultPressureStatusSequence++;
+
+}
+
+// 功能：将字符串输出到 CANoe Panel 的指定控件
+void ElecPutToPanel(char val[])
+{
+  StressPutPanelLine(val);
+}
+
+// 功能：初始化 DID 预期值
+void ElecInitExpectedData()
+{
+  // F180, len = 32
+  elecExpectedData[0][0]  = 0x42;
+  elecExpectedData[0][1]  = 0x6F;
+  elecExpectedData[0][2]  = 0x6F;
+  elecExpectedData[0][3]  = 0x74;
+  elecExpectedData[0][4]  = 0x2D;
+  elecExpectedData[0][5]  = 0x4F;
+  elecExpectedData[0][6]  = 0x45;
+  elecExpectedData[0][7]  = 0x4D;
+  elecExpectedData[0][8]  = 0x2D;
+  elecExpectedData[0][9]  = 0x34;
+  elecExpectedData[0][10] = 0x4D;
+  elecExpectedData[0][11] = 0x5F;
+  elecExpectedData[0][12] = 0x45;
+  elecExpectedData[0][13] = 0x30;
+  elecExpectedData[0][14] = 0x58;
+  elecExpectedData[0][15] = 0x5F;
+  elecExpectedData[0][16] = 0x32;
+  elecExpectedData[0][17] = 0x30;
+  elecExpectedData[0][18] = 0x32;
+  elecExpectedData[0][19] = 0x36;
+  elecExpectedData[0][20] = 0x30;
+  elecExpectedData[0][21] = 0x36;
+  elecExpectedData[0][22] = 0x32;
+  elecExpectedData[0][23] = 0x33;
+  elecExpectedData[0][24] = 0x2D;
+  elecExpectedData[0][25] = 0x31;
+  elecExpectedData[0][26] = 0x37;
+  elecExpectedData[0][27] = 0x3A;
+  elecExpectedData[0][28] = 0x35;
+  elecExpectedData[0][29] = 0x37;
+  elecExpectedData[0][30] = 0x20;
+  elecExpectedData[0][31] = 0x20;
+
+  // F187, len = 16
+  elecExpectedData[1][0]  = 0x37;
+  elecExpectedData[1][1]  = 0x30;
+  elecExpectedData[1][2]  = 0x34;
+  elecExpectedData[1][3]  = 0x30;
+  elecExpectedData[1][4]  = 0x30;
+  elecExpectedData[1][5]  = 0x32;
+  elecExpectedData[1][6]  = 0x31;
+  elecExpectedData[1][7]  = 0x32;
+  elecExpectedData[1][8]  = 0x33;
+  elecExpectedData[1][9]  = 0x41;
+  elecExpectedData[1][10] = 0x41;
+  elecExpectedData[1][11] = 0x20;
+  elecExpectedData[1][12] = 0x20;
+  elecExpectedData[1][13] = 0x20;
+  elecExpectedData[1][14] = 0x20;
+  elecExpectedData[1][15] = 0x20;
+
+  // F189, len = 24
+  elecExpectedData[2][0]  = 0x30;
+  elecExpectedData[2][1]  = 0x30;
+  elecExpectedData[2][2]  = 0x2E;
+  elecExpectedData[2][3]  = 0x30;
+  elecExpectedData[2][4]  = 0x30;
+  elecExpectedData[2][5]  = 0x2E;
+  elecExpectedData[2][6]  = 0x30;
+  elecExpectedData[2][7]  = 0x32;
+  elecExpectedData[2][8]  = 0x20;
+  elecExpectedData[2][9]  = 0x20;
+  elecExpectedData[2][10] = 0x20;
+  elecExpectedData[2][11] = 0x20;
+  elecExpectedData[2][12] = 0x20;
+  elecExpectedData[2][13] = 0x20;
+  elecExpectedData[2][14] = 0x20;
+  elecExpectedData[2][15] = 0x20;
+  elecExpectedData[2][16] = 0x20;
+  elecExpectedData[2][17] = 0x20;
+  elecExpectedData[2][18] = 0x20;
+  elecExpectedData[2][19] = 0x20;
+  elecExpectedData[2][20] = 0x20;
+  elecExpectedData[2][21] = 0x20;
+  elecExpectedData[2][22] = 0x20;
+  elecExpectedData[2][23] = 0x20;
+
+  // F089, len = 24
+  elecExpectedData[3][0]  = 0x30;
+  elecExpectedData[3][1]  = 0x2E;
+  elecExpectedData[3][2]  = 0x30;
+  elecExpectedData[3][3]  = 0x2E;
+  elecExpectedData[3][4]  = 0x31;
+  elecExpectedData[3][5]  = 0x20;
+  elecExpectedData[3][6]  = 0x20;
+  elecExpectedData[3][7]  = 0x20;
+  elecExpectedData[3][8]  = 0x20;
+  elecExpectedData[3][9]  = 0x20;
+  elecExpectedData[3][10] = 0x20;
+  elecExpectedData[3][11] = 0x20;
+  elecExpectedData[3][12] = 0x20;
+  elecExpectedData[3][13] = 0x20;
+  elecExpectedData[3][14] = 0x20;
+  elecExpectedData[3][15] = 0x20;
+  elecExpectedData[3][16] = 0x20;
+  elecExpectedData[3][17] = 0x20;
+  elecExpectedData[3][18] = 0x20;
+  elecExpectedData[3][19] = 0x20;
+  elecExpectedData[3][20] = 0x20;
+  elecExpectedData[3][21] = 0x20;
+  elecExpectedData[3][22] = 0x20;
+  elecExpectedData[3][23] = 0x20;
+
+  // F013, len = 16
+  elecExpectedData[4][0]  = 0x53;
+  elecExpectedData[4][1]  = 0x30;
+  elecExpectedData[4][2]  = 0x30;
+  elecExpectedData[4][3]  = 0x30;
+  elecExpectedData[4][4]  = 0x30;
+  elecExpectedData[4][5]  = 0x30;
+  elecExpectedData[4][6]  = 0x35;
+  elecExpectedData[4][7]  = 0x38;
+  elecExpectedData[4][8]  = 0x35;
+  elecExpectedData[4][9]  = 0x39;
+  elecExpectedData[4][10] = 0x39;
+  elecExpectedData[4][11] = 0x20;
+  elecExpectedData[4][12] = 0x20;
+  elecExpectedData[4][13] = 0x20;
+  elecExpectedData[4][14] = 0x20;
+  elecExpectedData[4][15] = 0x20;
+
+  // F18A, len = 10
+  elecExpectedData[5][0] = 0x37;
+  elecExpectedData[5][1] = 0x43;
+  elecExpectedData[5][2] = 0x53;
+  elecExpectedData[5][3] = 0x20;
+  elecExpectedData[5][4] = 0x20;
+  elecExpectedData[5][5] = 0x20;
+  elecExpectedData[5][6] = 0x20;
+  elecExpectedData[5][7] = 0x20;
+  elecExpectedData[5][8] = 0x20;
+  elecExpectedData[5][9] = 0x20;
+
+  // F190, len = 17
+  elecExpectedData[6][0]  = 0x01;
+  elecExpectedData[6][1]  = 0x02;
+  elecExpectedData[6][2]  = 0x03;
+  elecExpectedData[6][3]  = 0x04;
+  elecExpectedData[6][4]  = 0x05;
+  elecExpectedData[6][5]  = 0x06;
+  elecExpectedData[6][6]  = 0x00;
+  elecExpectedData[6][7]  = 0x00;
+  elecExpectedData[6][8]  = 0x00;
+  elecExpectedData[6][9]  = 0x00;
+  elecExpectedData[6][10] = 0x00;
+  elecExpectedData[6][11] = 0x00;
+  elecExpectedData[6][12] = 0x00;
+  elecExpectedData[6][13] = 0x00;
+  elecExpectedData[6][14] = 0x00;
+  elecExpectedData[6][15] = 0x00;
+  elecExpectedData[6][16] = 0x00;
+}
+
+// 功能：重置电检的所有状态变量
+void ElecResetState()
+{
+  int i, j;
+
+  elecCurrentIndex = 0;
+  elecTotalPass = 1;
+  elecCount = 0;
+  elecErrorCount = 0;
+  elecRespDid = 0;
+
+  for (i = 0; i < 50; i++)
+  {
+    elecErrorDidList[i] = 0;
+  }
+
+  for (i = 0; i < 7; i++)
+  {
+    for (j = 0; j < 64; j++)
+    {
+      elecReadData[i][j] = 0;
+    }
+  }
+
+  ElecInitExpectedData();
+}
+
+// 功能：发送 UDS 0x10 03 诊断会话控制请求
+void ElecSend10Session()
+{
+  elecTxMsg.dlc = 8;
+  elecTxMsg.byte(0) = 0x02;
+  elecTxMsg.byte(1) = 0x10;
+  elecTxMsg.byte(2) = 0x03;
+  elecTxMsg.byte(3) = 0xCC;
+  elecTxMsg.byte(4) = 0xCC;
+  elecTxMsg.byte(5) = 0xCC;
+  elecTxMsg.byte(6) = 0xCC;
+  elecTxMsg.byte(7) = 0xCC;
+  output(elecTxMsg);
+}
+
+// 功能：根据当前索引发送 UDS 0x22 DID 读取请求
+void ElecReadDid()
+{
+  if (elecCurrentIndex >= 7) return;
+
+  elecDid = elecDidList[elecCurrentIndex];
+  elecTxMsg.dlc = 8;
+  elecTxMsg.byte(0) = 0x03;
+  elecTxMsg.byte(1) = 0x22;
+  elecTxMsg.byte(2) = elecDid >> 8;
+  elecTxMsg.byte(3) = elecDid & 0xFF;
+  elecTxMsg.byte(4) = 0xCC;
+  elecTxMsg.byte(5) = 0xCC;
+  elecTxMsg.byte(6) = 0xCC;
+  elecTxMsg.byte(7) = 0xCC;
+  output(elecTxMsg);
+}
+
+// 功能：比较所有 DID 的实际读取数据和预期数据
+void ElecCompareAll()
+{
+  int idx, i, ok;
+
+  elecTotalPass = 1;
+  for (idx = 0; idx < 7; idx++)
+  {
+    ok = 1;
+    for (i = 0; i < elecDidLen[idx]; i++)
+    {
+      if (elecReadData[idx][i] != elecExpectedData[idx][i])
+      {
+        ok = 0;
+        elecTotalPass = 0;
+        break;
+      }
+    }
+
+    if (ok)
+    {
+      // 正常DID不逐项打印，避免连续压力测试产生大量冗余输出。
+    }
+    else
+    {
+      snprintf(elecTempStr, elCount(elecTempStr), "DID校验失败：%04X\n", elecDidList[idx]);
+      ElecPutToPanel(elecTempStr);
+
+      elecExist = 0;
+      for (i = 0; i < elecErrorCount; i++)
+      {
+        if (elecErrorDidList[i] == elecDidList[idx])
+        {
+          elecExist = 1;
+          break;
+        }
+      }
+
+      if (!elecExist && elecErrorCount < 50)
+      {
+        elecErrorDidList[elecErrorCount] = elecDidList[idx];
+        elecErrorCount++;
+      }
+    }
+  }
+}
+
+// 功能：显示本轮电检汇总结果
+void ElecShowResult()
+{
+  elecCount++;
+  if (elecTotalPass)
+  {
+    snprintf(stressLogText, elCount(stressLogText), "第%d轮电气检查全部通过", elecCount);
+    StressWriteLog(stressLogText);
+  }
+  else
+  {
+    snprintf(stressLogText, elCount(stressLogText), "第%d轮电气检查存在失败项目", elecCount);
+    StressWriteLog(stressLogText);
+  }
+}
+
+// 功能：发送 UDS 0x11 01 ECU 复位请求
+void ElecSendReset()
+{
+  elecTxMsg.dlc = 8;
+  elecTxMsg.byte(0) = 0x02;
+  elecTxMsg.byte(1) = 0x11;
+  elecTxMsg.byte(2) = 0x01;
+  elecTxMsg.byte(3) = 0xCC;
+  elecTxMsg.byte(4) = 0xCC;
+  elecTxMsg.byte(5) = 0xCC;
+  elecTxMsg.byte(6) = 0xCC;
+  elecTxMsg.byte(7) = 0xCC;
+  output(elecTxMsg);
+  snprintf(elecTempStr, elCount(elecTempStr), "11复位请求已发送\n");
+  ElecPutToPanel(elecTempStr);
+  setTimer(elecLoopTimer, 1000);
+}
+
+// 功能：启动电检模式
+void ElecStart()
+{
+  SrOpenLogFile();
+  StressWriteLog("===== 电检测试 =====");
+  ElecResetState();
+  // 电检启动状态已由测试用例标题体现，无需重复打印。
+  snprintf(elecTempStr, elCount(elecTempStr), "启动电检测试\n");
+  ElecPutToPanel(elecTempStr);
+  setTimer(elecStartTimer, 200);
+}
+
+// 功能：停止电检模式
+void ElecStop()
+{
+  int i;
+
+  cancelTimer(elecStartTimer);
+  cancelTimer(elecWaitTimer);
+  cancelTimer(elecLoopTimer);
+
+  if (gActiveMode == MODE_ELECTRICAL || elecCount > 0 || elecErrorCount > 0)
+  {
+    if (elecErrorCount == 0)
+    {
+      snprintf(elecTempStr, elCount(elecTempStr), "电检全部通过");
+      ElecPutToPanel(elecTempStr);
+    }
+    else
+    {
+      for (i = 0; i < elecErrorCount; i++)
+      {
+        snprintf(elecTempStr, elCount(elecTempStr), "DID校验失败：%04X\n", elecErrorDidList[i]);
+        ElecPutToPanel(elecTempStr);
+      }
+    }
+  }
+  SrCloseLogFile();
+}
+
+// ================== Msg_cycle 消息周期监控相关函数 ==================
+// 清空消息周期监控状态：重新启动周期测试前必须清掉上次接收时间和错误计数。
+void MsgReset()
+{
+  int i;
+
+  msgMonitoringActive = 0;
+  msgCount = 0;
+  msgErrCount = 0;
+
+  for (i = 0; i < 100; i++)
+  {
+    msgLastTime[i] = 0;
+    msgExpectedPeriod[i] = 0;
+    msgIdMap[i] = 0;
+  }
+}
+
+// 添加一个需要监控周期的报文ID，并记录它的期望周期。
+void MsgAddMessageToMonitor(int msgId, double periodMs)
+{
+  if (msgCount < 100)
+  {
+    msgIdMap[msgCount] = msgId;
+    msgExpectedPeriod[msgCount] = periodMs;
+    msgLastTime[msgCount] = 0;
+    msgCount++;
+    
+    // 监控清单固定配置，无需逐条输出。
+  }
+}
+
+// 启动消息周期监控：注册需要检查的报文ID和周期，然后等待on message *里统计。
+void MsgStart()
+{
+  SrOpenLogFile();
+  StressWriteLog("===== 消息周期监控测试 =====");
+  MsgReset();
+  msgMonitoringActive = 1;
+  StressWriteLog("启动周期监控测试");
+
+  MsgAddMessageToMonitor(0x447, 100.0);
+  MsgAddMessageToMonitor(0x450, 100.0);
+  MsgAddMessageToMonitor(0x3A7, 50.0);
+  MsgAddMessageToMonitor(0x3A9, 50.0);
+  MsgAddMessageToMonitor(0x3AD, 50.0);
+  MsgAddMessageToMonitor(0x3B2, 50.0);
+  MsgAddMessageToMonitor(0x3B4, 50.0);
+  MsgAddMessageToMonitor(0x3B9, 50.0);
+  MsgAddMessageToMonitor(0x58F, 500.0);
+  MsgAddMessageToMonitor(0x63F, 1000.0);
+
+}
+
+// 停止消息周期监控，只关闭监控开关，不清空历史结果。
+void MsgStop()
+{
+  msgMonitoringActive = 0;
+  SrCloseLogFile();
+}
+
+// 检查单个报文实际周期是否超出允许偏差，超出则累计错误并打印。
+void MsgCheckPeriod(int index, double actualPeriod, double currentTime)
+{
+  msgExpected = msgExpectedPeriod[index];
+
+  if (msgExpected > 10.0 && msgExpected <= 100.0)
+  {
+    msgTolerance = 10.0;
+  }
+  else if (msgExpected == 500.0 || msgExpected == 1000.0)
+  {
+    msgTolerance = 50.0;
+  }
+  else
+  {
+    msgTolerance = 0.0;
+  }
+
+  if (actualPeriod < (msgExpected - msgTolerance) || actualPeriod > (msgExpected + msgTolerance))
+  {
+    msgErrCount++;
+    msgDeviation = ((actualPeriod - msgExpected) / msgExpected) * 100;
+    snprintf(stressLogText, elCount(stressLogText),
+             "周期错误 时间%.5fms - 0x%X 预期%.1fms 实际%.3fms 偏差%+.1f%% 错误计数%d",
+             currentTime, msgIdMap[index], msgExpected, actualPeriod, msgDeviation, msgErrCount);
+    StressWriteLog(stressLogText);
+  }
+}
+
+// 奇瑞 CRC8 计算
+// 计算奇瑞E2E CRC8，用于消息周期模式下校验目标报文CRC。
+byte E2E_CRC8(byte buffer[], byte length)
+{
+  byte checksum, i, j;
+  byte CRC8_Poly = 0x1D;
+
+  checksum = 0x00;
+  for (i = 0; i < length; i++)
+  {
+    checksum = checksum ^ buffer[i];
+    for (j = 0; j < 8; j++)
+    {
+      if (checksum & 0x80)
+      {
+        checksum = ((checksum << 1) ^ CRC8_Poly);
+      }
+      else
+      {
+        checksum = (checksum << 1);
+      }
+    }
+  }
+
+  checksum = checksum ^ 0x00;
+  return checksum;
+}
+
+// 对雷达关键报文做CRC校验，目前处理0x447和0x450。
+void MsgCheckRadarCrc(long msgId, byte MSG_RawData[], int rawLen)
+{
+  int i;
+  byte msgRawData[64];
+  byte calcCrc;
+
+  if ((msgId != 0x447) && (msgId != 0x450))
+  {
+    return;
+  }
+
+  if (rawLen < 9)
+  {
+    snprintf(stressLogText, elCount(stressLogText),
+             "CRC未校验：0x%X 数据长度不足，DLC=%d",
+             msgId, rawLen);
+    StressPutPanelLine(stressLogText);
+    return;
+  }
+
+  if (msgId == 0x447)
+  {
+    msgRawData[0] = 0x44;
+  }
+  else
+  {
+    msgRawData[0] = 0x45;
+  }
+
+  msgRawData[1] = 0x00;
+
+  for (i = 0; i < 8; i++)
+  {
+    msgRawData[i + 2] = MSG_RawData[i + 1];
+  }
+
+  calcCrc = E2E_CRC8(msgRawData, 9);
+
+  if (MSG_RawData[0] != calcCrc)
+  {
+    snprintf(stressLogText, elCount(stressLogText),
+             "CRC错误：0x%X，接收值=%02X，计算值=%02X",
+             msgId, MSG_RawData[0], calcCrc);
+    StressPutPanelLine(stressLogText);
+  }
+}
+// ================== Common power cycle 公共休眠唤醒动作层 ==================
+// 判断当前公共动作层的使用者是否仍处于运行状态，防止模式切换后旧timer继续动作。
+int PwrOwnerActive()
+{
+  if (pwrOwner == PWR_OWNER_SUSPEND_RESUME)
+  {
+    return (gActiveMode == MODE_SUSPEND_RESUME && srTestEnabled);
+  }
+
+  if (pwrOwner == PWR_OWNER_DTC_AGING)
+  {
+    return (gActiveMode == MODE_DTC_AGING && dtcTestRunning);
+  }
+
+  return 0;
+}
+
+// 取消公共动作层所有timer，唤醒/休眠重新开始或模式停止时调用。
+void PwrCancelTimers()
+{
+  cancelTimer(pwrSend601Timer);
+  cancelTimer(pwrWakePowerModeTimer);
+  cancelTimer(pwrWakeArmingTimer);
+  cancelTimer(pwrWakeDoneTimer);
+  cancelTimer(pwrSleepArmingTimer);
+  cancelTimer(pwrSleepNodeOffTimer);
+  cancelTimer(pwrSleepDoneTimer);
+}
+
+int PwrVoltageFluctuationEnabled()
+{
+  return (gPwrUseItechPower == 1);
+}
+
+int PwrInitializeItechPower()
+{
+  int port;
+  int ret;
+
+  if(!PwrVoltageFluctuationEnabled())
+  {
+    gPwrItechPowerReady = 0;
+    return 0;
+  }
+
+  port = gPwrItechPowerPort;
+  if(port <= 0)
+  {
+    gPwrItechPowerReady = 0;
+    write("ITECH port initialization skipped: invalid port %d.", port);
+    return -1;
+  }
+
+  if(gPwrItechPowerReady && gITECHInitialized &&
+     gITECHInitializedPort == port)
+  {
+    return 0;
+  }
+
+  ret = ITECH_EnsureReady(port);
+  if(ret != 0)
+  {
+    gPwrItechPowerReady = 0;
+    write("ITECH port initialization failed on port %d, code=%d.", port, ret);
+    return ret;
+  }
+
+  gPwrItechPowerReady = 1;
+  write("ITECH power port initialized at project start: COM%d.", port);
+  return 0;
+}
+
+void PwrStartVoltageFluctuation()
+{
+  int port;
+  int ret;
+
+  if(!PwrVoltageFluctuationEnabled())
+    return;
+
+  port = gPwrItechPowerPort;
+  if(port <= 0)
+  {
+    write("Voltage fluctuation skipped: invalid ITECH power port %d.", port);
+    return;
+  }
+
+  ret = ITECH_StartVoltageFluctuation(port,
+                                      PWR_VOLTAGE_NOMINAL,
+                                      PWR_VOLTAGE_LOW,
+                                      PWR_VOLTAGE_HIGH,
+                                      PWR_VOLTAGE_FLUCTUATION_INTERVAL_MS);
+  if(ret != 0)
+  {
+    write("Voltage fluctuation failed to start on ITECH port %d, code=%d.",
+          port, ret);
+  }
+}
+
+void PwrStopVoltageFluctuation()
+{
+  ITECH_StopVoltageFluctuation(1);
+}
+
+// 停止公共动作层：取消timer、清owner/action/purpose，并停止0x601循环发送。
+void PwrStop()
+{
+  PwrCancelTimers();
+  PwrStopVoltageFluctuation();
+  pwrOwner = PWR_OWNER_NONE;
+  pwrAction = PWR_ACTION_NONE;
+  pwrPurpose = 0;
+  pwrIs601Sending = 0;
+}
+
+// Close the ITECH output and serial port when the pressure session ends.
+void PwrShutdownItechPower()
+{
+  int port;
+
+  if(gITECHInitialized && gITECHInitializedPort > 0)
+  {
+    port = gITECHInitializedPort;
+    ITECH_ClosePower(port);
+    SerialCloseAction(port);
+  }
+
+  gITECHInitialized = 0;
+  gITECHInitializedPort = -1;
+  gPwrItechPowerReady = 0;
+}
+
+// 发送一帧0x601网络管理报文，用于维持唤醒/网络状态。
+void PwrSend601Frame()
+{
+  pwrMsg601.id = 0x601;
+  pwrMsg601.dlc = 8;
+  pwrMsg601.byte(0) = 0x00;
+  pwrMsg601.byte(1) = 0x00;
+  pwrMsg601.byte(2) = 0x00;
+  pwrMsg601.byte(3) = 0x00;
+  pwrMsg601.byte(4) = 0x00;
+  pwrMsg601.byte(5) = 0x00;
+  pwrMsg601.byte(6) = 0x00;
+  pwrMsg601.byte(7) = 0x00;
+  output(pwrMsg601);
+}
+
+// Directly emits one 0x49D control frame so the final state is not lost when CGW is stopped.
+void PwrSendPowerModeFrame(int powerMode, int armingSts)
+{
+  pwrMsg49D.dlc = 8;
+  pwrMsg49D.FLZCU_9_PowerMode = powerMode;
+  pwrMsg49D.FLZCU_9_ArmingSts = armingSts;
+  pwrMsg49D.FLZCU_9_FuelVehPowerMode = 0;
+  output(pwrMsg49D);
+}
+
+// 启动0x601周期发送，立即发第一帧，然后按intervalMs循环。
+void PwrStart601(long intervalMs)
+{
+  cancelTimer(pwrSend601Timer);
+  pwrSend601IntervalMs = intervalMs;
+  pwrIs601Sending = 1;
+  PwrSend601Frame();
+  setTimer(pwrSend601Timer, pwrSend601IntervalMs);
+}
+
+// 停止0x601周期发送。进入休眠流程或停止模式时调用。
+void PwrStop601()
+{
+  pwrIs601Sending = 0;
+  cancelTimer(pwrSend601Timer);
+}
+
+// 启动公共唤醒流程：GCW51在线、0x601维持、FuelVehPowerMode=2、ArmingSts=0，等待stableMs后回调owner。
+void PwrStartWakeup(int owner, int purpose, long stableMs)
+{
+  PwrStop();
+  pwrOwner = (byte)owner;
+  pwrAction = PWR_ACTION_WAKE;
+  pwrPurpose = (byte)purpose;
+  pwrWakePowerModeDelayMs = 50;
+  pwrWakeArmingDelayMs = 20;
+  pwrWakeStableMs = stableMs;
+  @sysvar::Vehicle_input::Node::CGW= 0;
+  PwrStart601(100);
+  snprintf(stressLogText, elCount(stressLogText),
+           "发送唤醒信号 GCW51=0，50ms后发送PowerMode=2");
+  StressWriteLog(stressLogText);
+  PwrStartVoltageFluctuation();
+  setTimer(pwrWakePowerModeTimer, pwrWakePowerModeDelayMs);
+}
+
+// 启动公共休眠流程：停止0x601，PowerMode由2切至1，延时后切至0并发送ArmingSts=1，GCW51离线，等待doneDelayMs后回调owner。
+void PwrStartSleep(int owner, int purpose, long armingDelayMs, long nodeOffDelayMs, long doneDelayMs)
+{
+  PwrStop();
+  pwrOwner = (byte)owner;
+  pwrAction = PWR_ACTION_SLEEP;
+  pwrPurpose = (byte)purpose;
+  pwrSleepArmingDelayMs = armingDelayMs;
+  pwrSleepNodeOffDelayMs = nodeOffDelayMs;
+  pwrSleepDoneDelayMs = doneDelayMs;
+
+  PwrStop601();
+  $CAN1::CGW::FLZCU_9::FLZCU_9_PowerMode = 1;
+  $CAN1::CGW::FLZCU_9::FLZCU_9_ArmingSts = 0;
+  PwrSendPowerModeFrame(1, 0);
+  snprintf(stressLogText, elCount(stressLogText),
+            "发送休眠信号 PowerMode=1，%dms后依次发送PowerMode=0、ArmingSts=1",
+           pwrSleepArmingDelayMs);
+  StressWriteLog(stressLogText);
+  PwrStartVoltageFluctuation();
+  setTimer(pwrSleepArmingTimer, pwrSleepArmingDelayMs);
+}
+
+// 公共唤醒完成分发：根据owner回到休眠唤醒压测或DTC老化各自的业务状态机。
+void PwrHandleWakeDone()
+{
+  int owner;
+  int purpose;
+
+  PwrStopVoltageFluctuation();
+  owner = pwrOwner;
+  purpose = pwrPurpose;
+  pwrAction = PWR_ACTION_NONE;
+
+  if (owner == PWR_OWNER_SUSPEND_RESUME)
+  {
+    SrOnWakeDone(purpose);
+  }
+  else if (owner == PWR_OWNER_DTC_AGING)
+  {
+    DtcAgingOnWakeDone(purpose);
+  }
+}
+
+// 公共休眠完成分发：根据owner回到休眠唤醒压测或DTC老化各自的业务状态机。
+void PwrHandleSleepDone()
+{
+  int owner;
+  int purpose;
+
+  PwrStopVoltageFluctuation();
+  owner = pwrOwner;
+  purpose = pwrPurpose;
+  pwrAction = PWR_ACTION_NONE;
+
+  if (owner == PWR_OWNER_SUSPEND_RESUME)
+  {
+    SrOnSleepDone(purpose);
+  }
+  else if (owner == PWR_OWNER_DTC_AGING)
+  {
+    DtcAgingOnSleepDone(purpose);
+  }
+}
+// ================== Suspend and resume 休眠唤醒测试相关函数 ==================
+// 休眠唤醒异常统一输出到Panel。
+void SrWriteLogLine(char logStr[])
+{
+  StressWriteLog(logStr);
+  StressPutPanelLine(logStr);
+}
+
+void SrWriteLogLine1(char format[], double param1)
+{
+  snprintf(srLogBuffer, elCount(srLogBuffer), format, param1);
+  SrWriteLogLine(srLogBuffer);
+}
+
+void SrWriteLogLine2(char format[], double param1, int param2)
+{
+  snprintf(srLogBuffer, elCount(srLogBuffer), format, param1, param2);
+  SrWriteLogLine(srLogBuffer);
+}
+
+void SrWriteLogLine3(char format[], double param1, int param2, int param3)
+{
+  snprintf(srLogBuffer, elCount(srLogBuffer), format, param1, param2, param3);
+  SrWriteLogLine(srLogBuffer);
+}
+
+// 压力测试不保存独立日志文件，保留空函数以维持原有流程调用。
+void SrOpenLogFile()
+{
+  srLogFileHandle = 0;
+}
+
+void SrCloseLogFile()
+{
+  srLogFileHandle = 0;
+}
+// 清空本轮唤醒监控结果：所有目标报文重新从未检测到开始统计。
+void SrResetAllMonitor()
+{
+  int i;
+
+  for (i = 0; i < srMonitorIdCount; i++)
+  {
+    srTargetMsgDetected[i] = 0;
+    srTargetMsgCount[i] = 0;
+    srTargetMsgFirstTime[i] = 0;
+    srTargetMsgLastTime[i] = 0;
+  }
+
+  srAllDetected = 1;
+  srAnyDetected = 0;
+  cancelTimer(srMonitorTimer);
+  srIsMonitoring = 0;
+}
+
+// 清空休眠唤醒压测状态，回到等待开始第一轮唤醒的状态。
+void SrResetState()
+{
+  srWorkState = 1;
+  srIsMonitoring = 0;
+  srIsSleepPhase = 0;
+  srSleepIllegalMessageDetected = 0;
+  srTestEnabled = 0;
+  srTestCount = 0;
+  SrResetAllMonitor();
+}
+
+// 开始唤醒阶段报文监控，on message *会记录目标报文是否出现。
+void SrStartMonitoring()
+{
+  srIsMonitoring = 1;
+  setTimer(srMonitorTimer, SR_MONITOR_CHECK_INTERVAL);
+}
+
+// 停止唤醒阶段报文监控，并取消监控timer。
+void SrStopMonitoring()
+{
+  srIsMonitoring = 0;
+  cancelTimer(srMonitorTimer);
+}
+
+// 休眠失败时停止后续循环，但不发送任何恢复信号，保留当前总线现场。
+void SrStopKeepSleepFailure()
+{
+  cancelTimer(srCycleTimer);
+  cancelTimer(srSleepPhaseMonitorTimer);
+  cancelTimer(srMonitorTimer);
+  cancelTimer(srWakeMonitorDelayTimer);
+  PwrStop();
+  srIsMonitoring = 0;
+  srIsSleepPhase = 0;
+  srTestEnabled = 0;
+  if (gActiveMode == MODE_SUSPEND_RESUME)
+  {
+    gActiveMode = MODE_NONE;
+  }
+  SrWriteLogLine("休眠异常：已停止后续循环并保留当前总线现场，不执行唤醒或恢复动作。");
+  SrCloseLogFile();
+}
+// 在目标报文列表中查找当前报文ID，返回索引用于记录检测结果。
+int SrFindMsgIndex(int msgId)
+{
+  int i;
+
+  for (i = 0; i < srMonitorIdCount; i++)
+  {
+    if (srTargetMsgIds[i] == msgId) return i;
+  }
+
+  return -1;
+}
+// 统一记录休眠唤醒目标报文；专用on message与通配on message均可调用。
+void SrRecordTargetMessage(int msgId, int messageDlc)
+{
+  int idx;
+  double messageTime;
+
+  if (gActiveMode != MODE_SUSPEND_RESUME || !srTestEnabled) return;
+
+  idx = SrFindMsgIndex(msgId);
+  if (idx == -1) return;
+
+  if (srIsMonitoring)
+  {
+    messageTime = timeNow() / 100000.0;
+    srTargetMsgDetected[idx] = 1;
+    if (srTargetMsgCount[idx] == 0)
+    {
+      srTargetMsgFirstTime[idx] = messageTime;
+    }
+    srTargetMsgLastTime[idx] = messageTime;
+    srTargetMsgCount[idx]++;
+  }
+
+  if (srIsSleepPhase && !srSleepIllegalMessageDetected)
+  {
+    srSleepIllegalMessageDetected = 1;
+    srCurrentTime = timeNow() / 100000.0;
+    snprintf(srLogBuffer, elCount(srLogBuffer),
+             "%.5fms 第%d轮休眠失败：收到非法目标报文ID=0x%X，DLC=%d。",
+             srCurrentTime, srTestCount + 1, msgId, messageDlc);
+    SrWriteLogLine(srLogBuffer);
+    DtcFaultControllerPublishPressureStatus(DTC_FAULT_PRESSURE_STATUS_FAIL, srLogBuffer);
+    SrStopKeepSleepFailure();
+  }
+}
+
+// 汇总本轮唤醒监控结果：打印未检测到的目标报文，或打印本轮通过。
+// Checks the wake-up window and publishes one concise pass/fail result to the HTML report.
+void SrCheckMonitorResult()
+{
+  int i;
+  int currentRound;
+  int missingCount;
+  int firstMissingId;
+  double averageCycleMs;
+  char resultText[1024];
+  char detailText[128];
+
+  srCurrentTime = timeNow() / 100000.0;
+  currentRound = srTestCount + 1;
+  missingCount = 0;
+  firstMissingId = 0;
+  srAllDetected = 1;
+
+  for (i = 0; i < srMonitorIdCount; i++)
+  {
+    if (srTargetMsgIds[i] == 0x0)
+    {
+      continue;
+    }
+
+    if (!srTargetMsgDetected[i])
+    {
+      missingCount++;
+      if (firstMissingId == 0)
+      {
+        firstMissingId = srTargetMsgIds[i];
+      }
+      srAllDetected = 0;
+    }
+  }
+
+  if (!srAllDetected)
+  {
+    snprintf(resultText, elCount(resultText),
+             "%.5fms 第%d轮唤醒失败：%d条目标报文未收到，首条=0x%X。",
+             srCurrentTime, currentRound, missingCount, firstMissingId);
+    SrWriteLogLine(resultText);
+    DtcFaultControllerPublishPressureStatus(DTC_FAULT_PRESSURE_STATUS_FAIL, resultText);
+    return;
+  }
+
+  snprintf(resultText, elCount(resultText),
+           "第%d轮唤醒报文检查通过：\n",
+           currentRound);
+  for (i = 0; i < srMonitorIdCount; i++)
+  {
+    if (srTargetMsgCount[i] > 1)
+    {
+      averageCycleMs = ((srTargetMsgLastTime[i] - srTargetMsgFirstTime[i]) * 1000.0) /
+                       (srTargetMsgCount[i] - 1);
+      snprintf(detailText, elCount(detailText),
+               "0x%X(%s) 收到%d次，平均周期=%.1fms；\n",
+               srTargetMsgIds[i],
+               srTargetMsgNames[i],
+               srTargetMsgCount[i],
+               averageCycleMs);
+    }
+    else
+    {
+      snprintf(detailText, elCount(detailText),
+               "0x%X(%s) 收到1次，平均周期=无法计算；\n",
+               srTargetMsgIds[i],
+               srTargetMsgNames[i]);
+    }
+
+    strncat(resultText, detailText, elCount(resultText));
+  }
+
+  SrWriteLogLine(resultText);
+  DtcFaultControllerPublishPressureStatus(DTC_FAULT_PRESSURE_STATUS_PASS, resultText);
+}
+void SrOnWakeSignalSent()
+{
+  char resultText[256];
+
+  if (gActiveMode != MODE_SUSPEND_RESUME || !srTestEnabled) return;
+
+  cancelTimer(srWakeMonitorDelayTimer);
+  snprintf(resultText, elCount(resultText),
+           "第%d轮唤醒信号已发送，等待%d ms后开始监控目标报文。",
+           srTestCount + 1, SR_WAKEUP_MONITOR_DELAY_MS);
+  SrWriteLogLine(resultText);
+  DtcFaultControllerPublishPressureStatus(DTC_FAULT_PRESSURE_STATUS_INFO, resultText);
+  setTimer(srWakeMonitorDelayTimer, SR_WAKEUP_MONITOR_DELAY_MS);
+}
+
+void SrOnWakeDone(int purpose)
+{
+  if (gActiveMode != MODE_SUSPEND_RESUME || !srTestEnabled) return;
+  setTimer(srCycleTimer, 100);
+}
+
+// 公共休眠完成后进入睡眠监控窗口，用于检查睡眠阶段是否收到非法目标报文。
+// After the configured sleep wait, start a silent-message observation window.
+void SrOnSleepDone(int purpose)
+{
+  char resultText[256];
+
+  if (gActiveMode != MODE_SUSPEND_RESUME || !srTestEnabled) return;
+  srIsSleepPhase = 1;
+  srSleepIllegalMessageDetected = 0;
+  snprintf(resultText, elCount(resultText),
+           "第%d轮休眠等待完成，开始%d ms静默报文检查。",
+           srTestCount + 1, SR_SLEEP_MONITOR_DURATION);
+  SrWriteLogLine(resultText);
+  DtcFaultControllerPublishPressureStatus(DTC_FAULT_PRESSURE_STATUS_INFO, resultText);
+  setTimer(srSleepPhaseMonitorTimer, SR_SLEEP_MONITOR_DURATION);
+}
+
+// 启动休眠唤醒压测：清状态、打开日志，3s后开始第一轮唤醒。
+// Starts the suspend/resume pressure test and schedules the first wake-up round.
+void SrStart()
+{
+  char resultText[256];
+
+  SrResetState();
+  DtcAgingResetState();
+  srCurrentTime = timeNow() / 100000.0;
+  srTestEnabled = 1;
+  SrOpenLogFile();
+  StressWriteLog("===== 休眠唤醒压测 =====");
+  snprintf(resultText, elCount(resultText), "休眠唤醒压测启动：3 s后开始第1轮唤醒。");
+  SrWriteLogLine(resultText);
+  DtcFaultControllerPublishPressureStatus(DTC_FAULT_PRESSURE_STATUS_INFO, resultText);
+  setTimer(srCycleTimer, 3000);
+}
+void SrStop()
+{
+  cancelTimer(srCycleTimer);
+  cancelTimer(srSleepPhaseMonitorTimer);
+  cancelTimer(srMonitorTimer);
+  cancelTimer(srWakeMonitorDelayTimer);
+  PwrStop();
+  srIsSleepPhase = 0;
+  srTestEnabled = 0;
+  SrResetAllMonitor();
+  SrCloseLogFile();
+}
+
+// ================== DTC aging DTC老化测试相关函数 ==================
+// 模块1：基础工具与缓存清理，负责时间戳获取、ISO-TP缓存清空、19 06数据复位。
+double DtcAgingNowSec()
+{
+  return timeNow() / 100000.0;
+}
+
+// 清空ISO-TP组包状态，新的诊断请求发出前必须清一次，避免上一笔残留数据影响本次响应。
+void DtcAgingResetIsoTp()
+{
+  int i;
+
+  dtcIsoTpLen = 0;
+  dtcIsoTpPos = 0;
+  dtcIsoTpTargetLen = 0;
+  dtcIsoTpWaitingCf = 0;
+  dtcIsoTpNextSn = 1;
+  for (i = 0; i < elCount(dtcIsoTpBuf); i++)
+  {
+    dtcIsoTpBuf[i] = 0x00;
+  }
+}
+
+// 清空19 06解析结果，默认当前老化计数置为0xFF，便于看出还没有成功解析过响应。
+void DtcAgingReset1906Data()
+{
+  int i;
+
+  dtc1906DataLen = 0;
+  dtcCurrentAgingValue = 0xFF;
+  for (i = 0; i < elCount(dtc1906Data); i++)
+  {
+    dtc1906Data[i] = 0x00;
+  }
+}
+
+// DTC老化状态写入当前测试用例，供HTML报告展示关键过程和老化次数。
+// DTC aging status is reported only while the DTC-aging pressure test is active.
+void DtcAgingWriteResult(int statusResult, char logStr[])
+{
+  if ((gActiveMode != MODE_DTC_AGING) || !dtcTestRunning)
+  {
+    return;
+  }
+
+  DtcFaultControllerPublishPressureStatus(statusResult, logStr);
+}
+void DtcAgingWrite(char logStr[])
+{
+  DtcAgingWriteResult(DTC_FAULT_PRESSURE_STATUS_INFO, logStr);
+}
+
+void DtcFaultControllerResetPressureStatus()
+{
+  gDtcFaultPressureStatusSequence = 0;
+  gDtcFaultPressureStatusResult = DTC_FAULT_PRESSURE_STATUS_INFO;
+  gDtcFaultPressureStatusText[0] = 0;
+}
+
+long DtcFaultControllerGetPressureStatusSequence()
+{
+  return gDtcFaultPressureStatusSequence;
+}
+
+long DtcFaultControllerGetPressureStatusResult()
+{
+  return gDtcFaultPressureStatusResult;
+}
+
+void DtcFaultControllerGetPressureStatusText(char statusText[])
+{
+  snprintf(statusText, elCount(statusText), "%s", gDtcFaultPressureStatusText);
+}
+
+// 模块2：测试过程控制，负责停止UDS等待、取消定时器，以及整轮状态清零。
+// 停止等待当前UDS响应：取消P2/P2*定时器，并清掉当前挂起请求。
+void DtcAgingStopUdsWait()
+{
+  cancelTimer(dtcUdsTimer);
+  dtcPendingReq = DTC_REQ_NONE;
+  dtcP2Extended = 0;
+  dtcIsoTpWaitingCf = 0;
+  dtcLastNrc = 0x00;
+}
+
+// 停止老化相关所有定时器：包含公共休眠唤醒动作层、故障观察窗口和UDS超时。
+void DtcAgingCancelAllTimers()
+{
+  PwrStop();
+  cancelTimer(dtcFaultObserveTimer);
+  cancelTimer(dtcUdsTimer);
+  cancelTimer(dtcSleepVerifyStartTimer);
+  dtcSleepVerifyActive = 0;
+  dtcSleepIllegalMessageDetected = 0;
+  dtcSleepIllegalMessageId = 0x000;
+}
+
+// Restore the power/arming inputs when the aging test ends in any phase.
+void DtcAgingRestorePowerState()
+{
+  PwrStop();
+  $CAN1::CGW::FLZCU_9::FLZCU_9_PowerMode = 0;
+  $CAN1::CGW::FLZCU_9::FLZCU_9_ArmingSts = 1;
+  PwrSendPowerModeFrame(0, 1);
+  @sysvar::Vehicle_input::Node::CGW = 1;
+}
+
+// DTC老化休眠失败时只停止状态机，不恢复电源/设防状态、不清除故障注入，保留现场供分析。
+void DtcAgingStopKeepScene(char reason[])
+{
+  if (!dtcTestRunning)
+  {
+    return;
+  }
+
+  if (reason[0] != 0)
+  {
+    DtcAgingWriteResult(DTC_FAULT_PRESSURE_STATUS_FAIL, reason);
+  }
+
+  DtcAgingCancelAllTimers();
+  DtcAgingStopUdsWait();
+  dtcTestRunning = 0;
+  dtcAgingNormalStopRequested = 0;
+  if (gActiveMode == MODE_DTC_AGING)
+  {
+    gActiveMode = MODE_NONE;
+  }
+  SrCloseLogFile();
+}
+int DtcAgingIsSleepTargetMessage(dword msgId)
+{
+  return ((msgId == 0x447) || (msgId == 0x450) ||
+          (msgId == 0x58F) || (msgId == 0x63F) ||
+          (msgId == 0x4F3) || (msgId == 0x4F7) ||
+          (msgId == 0x594) || (msgId == 0x640));
+}
+
+void DtcAgingRecordSleepMessage(dword msgId)
+{
+  if (!dtcSleepVerifyActive || !DtcAgingIsSleepTargetMessage(msgId))
+  {
+    return;
+  }
+
+  if (!dtcSleepIllegalMessageDetected)
+  {
+    dtcSleepIllegalMessageDetected = 1;
+    dtcSleepIllegalMessageId = msgId;
+    snprintf(dtcLogText, elCount(dtcLogText),
+             "%.3fs 休眠静默检查失败：收到目标报文0x%X，已停止后续循环并保留现场。",
+             DtcAgingNowSec(), msgId);
+    DtcAgingStopKeepScene(dtcLogText);
+  }
+}
+
+// 清空单轮老化核心状态。重新制造DTC或停止测试时会调用，避免上一轮状态带入下一轮。
+void DtcAgingResetCoreState()
+{
+  dtcWakePurpose = DTC_PURPOSE_BUILD_DTC;
+  dtcDtcBuilt = 0;
+  dtcFinalClearCheckPending = 0;
+  dtcClearVerifyPending = 0;
+  dtcAgingNormalStopRequested = 0;
+  dtcSleepVerifyActive = 0;
+  dtcSleepIllegalMessageDetected = 0;
+  dtcSleepIllegalMessageId = 0x000;
+  dtcState = DTC_STATE_IDLE;
+  dtcPendingReq = DTC_REQ_NONE;
+  dtcP2Extended = 0;
+  dtcLastNrc = 0x00;
+  dtcCompletedAgingCycles = 0;
+  dtcBaselineCurrentAging = 0xFF;
+  dtcCurrentAgingValue = 0xFF;
+  dtcTargetDtcFound = 0;
+  dtcTargetDtcStatus = 0x00;
+  DtcAgingResetIsoTp();
+  DtcAgingReset1906Data();
+}
+
+void DtcAgingResetState()
+{
+  dtcTestRunning = 0;
+  dtcLoopFinishCount = 0;
+  DtcAgingResetCoreState();
+}
+
+void DtcAgingResetLoopState()
+{
+  DtcAgingResetCoreState();
+}
+
+// 模块3：诊断发送基础能力，负责请求名转换、0x601保活和通用诊断帧发送。
+void DtcAgingGetReqName(int reqId, char reqName[])
+{
+  if (reqId == DTC_REQ_14)
+  {
+    snprintf(reqName, 16, "14 FFFFFF");
+  }
+  else if (reqId == DTC_REQ_190209)
+  {
+    snprintf(reqName, 16, "19 02 09");
+  }
+  else if (reqId == DTC_REQ_1906)
+  {
+    snprintf(reqName, 16, "19 06");
+  }
+  else
+  {
+    snprintf(reqName, 16, "未知");
+  }
+}
+
+// 发送任意UDS请求后调用：记录当前请求类型，并启动P2首响应超时计时。
+void DtcAgingStartUdsWait(int reqId)
+{
+  DtcAgingStopUdsWait();
+  dtcPendingReq = reqId;
+  dtcP2Extended = 0;
+  setTimer(dtcUdsTimer, DTC_UDS_P2_MS);
+}
+
+// 收到NRC 0x78后调用：切换到P2*等待窗口，期间不发送下一笔诊断。
+void DtcAgingStartP2StarWait()
+{
+  cancelTimer(dtcUdsTimer);
+  dtcP2Extended = 1;
+  setTimer(dtcUdsTimer, DTC_UDS_P2_STAR_MS);
+}
+
+// 发送单帧诊断请求。当前老化流程主动发送的诊断都是0x743单帧请求。
+void DtcAgingSendDiagFrame(byte sfLen,
+                           byte b1, byte b2, byte b3, byte b4,
+                           byte b5, byte b6, byte b7)
+{
+  dtcDiagTxMsg.dlc = 8;
+  dtcDiagTxMsg.byte(0) = sfLen;
+  dtcDiagTxMsg.byte(1) = b1;
+  dtcDiagTxMsg.byte(2) = b2;
+  dtcDiagTxMsg.byte(3) = b3;
+  dtcDiagTxMsg.byte(4) = b4;
+  dtcDiagTxMsg.byte(5) = b5;
+  dtcDiagTxMsg.byte(6) = b6;
+  dtcDiagTxMsg.byte(7) = b7;
+  output(dtcDiagTxMsg);
+}
+
+// 收到ISO-TP首帧后发送流控帧，允许ECU继续发送连续帧。
+void DtcAgingSendFlowControl()
+{
+  dtcDiagTxMsg.dlc = 8;
+  dtcDiagTxMsg.byte(0) = 0x30;
+  dtcDiagTxMsg.byte(1) = 0x00;
+  dtcDiagTxMsg.byte(2) = 0x00;
+  dtcDiagTxMsg.byte(3) = 0x00;
+  dtcDiagTxMsg.byte(4) = 0x00;
+  dtcDiagTxMsg.byte(5) = 0x00;
+  dtcDiagTxMsg.byte(6) = 0x00;
+  dtcDiagTxMsg.byte(7) = 0x00;
+  output(dtcDiagTxMsg);
+}
+
+// 模块4：流程收尾与唤醒休眠控制，负责测试停止、大循环重启和阶段日志输出。
+// 老化测试统一停止出口：先打印失败/停止原因，再打印统计摘要，最后清理定时器和状态。
+void DtcAgingStop(char reason[])
+{
+  int isFailure;
+
+  if (!dtcTestRunning)
+  {
+    SrCloseLogFile();
+    return;
+  }
+
+  isFailure = 0;
+  if (!dtcAgingNormalStopRequested && (reason[0] != 0))
+  {
+    isFailure = 1;
+  }
+
+  if (!dtcAgingStopKeepLastStatus)
+  {
+    if (reason[0] != 0)
+    {
+      snprintf(dtcLogText, elCount(dtcLogText), "%.3fs %s", DtcAgingNowSec(), reason);
+      if (isFailure)
+      {
+        DtcAgingWriteResult(DTC_FAULT_PRESSURE_STATUS_FAIL, dtcLogText);
+        // Keep the failure as the latest report entry while the controller cleans up.
+        dtcAgingStopKeepLastStatus = 1;
+      }
+      else
+      {
+        DtcAgingWrite(dtcLogText);
+      }
+    }
+
+    if (!dtcAgingStopKeepLastStatus)
+    {
+      snprintf(dtcLogText, elCount(dtcLogText),
+               "%.3fs 测试停止。已完成大循环=%d 当前循环次数=%d 基线计数=0x%02X 当前计数=0x%02X",
+               DtcAgingNowSec(),
+               dtcLoopFinishCount,
+               dtcCompletedAgingCycles,
+               dtcBaselineCurrentAging,
+               dtcCurrentAgingValue);
+      DtcAgingWrite(dtcLogText);
+    }
+  }
+  DtcAgingCancelAllTimers();
+  DtcAgingStopUdsWait();
+  DtcAgingRestorePowerState();
+  @sysvar::Vehicle_input::Message_MissingTime::ONEBOX_1_0x98 = 0;
+  @sysvar::Vehicle_input::MSG::ONEBOX_1_0x98 = 0;
+  dtcAgingStopKeepLastStatus = 0;
+  dtcAgingNormalStopRequested = 0;
+  DtcAgingResetState();
+  // 老化测试自己结束后复位模式，便于再次启动
+  if (gActiveMode == MODE_DTC_AGING)
+  {
+    gActiveMode = MODE_NONE;
+
+  }
+  SrCloseLogFile();
+}
+
+// 最终第11轮19 02 09读不到目标DTC时，认为本轮老化完成，然后重新制造DTC进入下一大循环。
+void DtcAgingRestartAfterClear()
+{
+  dtcLoopFinishCount++;
+  snprintf(dtcLogText, elCount(dtcLogText),
+           "%.3fs 第%d次大循环完成，第11次19 02 09未读到DTC，开始重新制造DTC",
+           DtcAgingNowSec(),
+           dtcLoopFinishCount);
+  DtcAgingWrite(dtcLogText);
+  DtcAgingStopUdsWait();
+  @sysvar::Vehicle_input::Message_MissingTime::ONEBOX_1_0x98 = 0;
+  @sysvar::Vehicle_input::MSG::ONEBOX_1_0x98 = 0;
+  DtcAgingResetLoopState();
+  DtcAgingStartWakeup(DTC_PURPOSE_BUILD_DTC);
+}
+
+// 根据本次唤醒目的打印提示：第一次是制造DTC，后续是读取老化计数或最终确认DTC是否清除。
+void DtcAgingWriteWakeupLog(int purpose)
+{
+  if (purpose == DTC_PURPOSE_BUILD_DTC)
+  {
+    snprintf(dtcLogText, elCount(dtcLogText), "%.3fs 第一次唤醒ECU，准备制造DTC", DtcAgingNowSec());
+  }
+  else if (dtcFinalClearCheckPending)
+  {
+    snprintf(dtcLogText, elCount(dtcLogText), "%.3fs 唤醒ECU，准备发送19 02 09确认DTC是否清除", DtcAgingNowSec());
+  }
+  else
+  {
+    snprintf(dtcLogText, elCount(dtcLogText), "%.3fs 唤醒ECU，准备读取19 06老化计数", DtcAgingNowSec());
+  }
+  DtcAgingWrite(dtcLogText);
+}
+
+// 公共唤醒动作完成后的业务入口：根据当前状态决定发14、19 02 09还是19 06。
+void DtcAgingStartPostWakeupSequence()
+{
+  if (!dtcDtcBuilt)
+  {
+    dtcState = DTC_STATE_WAIT_14_CLEAR;
+    DtcAgingSend14Clear();
+  }
+  else if (dtcFinalClearCheckPending)
+  {
+    dtcState = DTC_STATE_WAIT_190209;
+    DtcAgingSend190209();
+  }
+  else
+  {
+    dtcState = DTC_STATE_WAIT_1906_AFTER_WAKE;
+    DtcAgingSend1906();
+  }
+}
+
+// 休眠等待结束后的提示日志，下一步会再次唤醒ECU并继续诊断。
+void DtcAgingWritePostSleepLog()
+{
+  if (dtcFinalClearCheckPending)
+  {
+    snprintf(dtcLogText, elCount(dtcLogText), "%.3fs 15s等待结束，再次唤醒并发送19 02 09确认DTC是否清除", DtcAgingNowSec());
+  }
+  else
+  {
+    snprintf(dtcLogText, elCount(dtcLogText), "%.3fs 15s等待结束，再次唤醒并读取19 06", DtcAgingNowSec());
+  }
+  DtcAgingWrite(dtcLogText);
+}
+
+// 公共休眠唤醒动作层回调：唤醒完成后回到DTC老化状态机。
+void DtcAgingOnWakeDone(int purpose)
+{
+  if (gActiveMode != MODE_DTC_AGING || !dtcTestRunning) return;
+
+  DtcAgingStartPostWakeupSequence();
+}
+
+// 公共休眠唤醒动作层回调：休眠等待完成后打印日志，并进入下一次唤醒。
+void DtcAgingOnSleepDone(int purpose)
+{
+  if (gActiveMode != MODE_DTC_AGING || !dtcTestRunning) return;
+
+  cancelTimer(dtcSleepVerifyStartTimer);
+  if (dtcSleepVerifyActive)
+  {
+    dtcSleepVerifyActive = 0;
+    if (dtcSleepIllegalMessageDetected)
+    {
+      snprintf(dtcLogText, elCount(dtcLogText),
+               "%.3fs 休眠静默检查失败：末%dms收到目标报文0x%X",
+               DtcAgingNowSec(),
+               DTC_SLEEP_VERIFY_WINDOW_MS,
+               dtcSleepIllegalMessageId);
+      DtcAgingStopKeepScene(dtcLogText);
+      return;
+    }
+
+    snprintf(dtcLogText, elCount(dtcLogText),
+             "%.3fs 休眠静默检查通过：末%dms未收到目标报文",
+             DtcAgingNowSec(),
+             DTC_SLEEP_VERIFY_WINDOW_MS);
+    DtcAgingWriteResult(DTC_FAULT_PRESSURE_STATUS_PASS, dtcLogText);
+  }
+
+  DtcAgingWritePostSleepLog();
+  DtcAgingStartWakeup(DTC_PURPOSE_READ_AGING);
+}
+
+// 启动一次老化用唤醒流程。真正的电源/Arming/601动作由公共PwrStartWakeup执行。
+void DtcAgingStartWakeup(int purpose)
+{
+  dtcWakePurpose = (byte)purpose;
+  DtcAgingWriteWakeupLog(purpose);
+  PwrStartWakeup(PWR_OWNER_DTC_AGING, purpose, DTC_WAKE_STABLE_MS);
+}
+
+// 启动一次老化用休眠流程。休眠完成后会通过DtcAgingOnSleepDone继续下一轮。
+void DtcAgingStartSleep()
+{
+  dtcSleepVerifyActive = 0;
+  dtcSleepIllegalMessageDetected = 0;
+  dtcSleepIllegalMessageId = 0x000;
+  cancelTimer(dtcSleepVerifyStartTimer);
+  PwrStartSleep(PWR_OWNER_DTC_AGING, DTC_PURPOSE_READ_AGING, 50, 100, DTC_SLEEP_WAIT_MS);
+  setTimer(dtcSleepVerifyStartTimer, DTC_SLEEP_WAIT_MS - DTC_SLEEP_VERIFY_WINDOW_MS);
+}
+
+// 模块5：故障制造和诊断服务发送，负责造故障并发送14、19 02 09、19 06。
+// 制造目标DTC：通过ONEBOX_1_0x98报文缺失触发故障，等待观察窗口结束后再读取DTC。
+void DtcAgingInjectTargetFault()
+{
+  @sysvar::Vehicle_input::Message_MissingTime::ONEBOX_1_0x98 = DTC_FAULT_INJECT_MS;
+  @sysvar::Vehicle_input::MSG::ONEBOX_1_0x98 = 1;
+
+  dtcState = DTC_STATE_WAIT_FAULT_OBSERVE;
+  snprintf(dtcLogText, elCount(dtcLogText),
+           "%.3fs 注入ONEBOX_1_0x98报文缺失故障，持续%dms",
+           DtcAgingNowSec(),
+           DTC_FAULT_INJECT_MS);
+  DtcAgingWrite(dtcLogText);
+  cancelTimer(dtcFaultObserveTimer);
+  setTimer(dtcFaultObserveTimer, DTC_FAULT_OBSERVE_MS);
+}
+
+// 发送14 FFFFFF清除DTC。第一次唤醒后先清故障，再注入目标故障。
+void DtcAgingSend14Clear()
+{
+  DtcAgingResetIsoTp();
+  DtcAgingStartUdsWait(DTC_REQ_14);
+  DtcAgingSendDiagFrame(0x04, 0x14, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00);
+  snprintf(dtcLogText, elCount(dtcLogText), "%.3fs 发送14 FFFFFF清除DTC", DtcAgingNowSec());
+  DtcAgingWrite(dtcLogText);
+}
+
+// 发送19 02 09读取当前DTC列表，用于确认目标DTC是否出现或最终是否清除。
+void DtcAgingSend190209()
+{
+  byte statusMask;
+
+  statusMask = 0x09;
+  if (dtcClearVerifyPending || dtcFinalClearCheckPending)
+  {
+    statusMask = 0xFF;
+  }
+
+  DtcAgingResetIsoTp();
+  DtcAgingStartUdsWait(DTC_REQ_190209);
+  DtcAgingSendDiagFrame(0x03, 0x19, 0x02, statusMask, 0x00, 0x00, 0x00, 0x00);
+  snprintf(dtcLogText, elCount(dtcLogText),
+           "%.3fs 发送19 02 %02X", DtcAgingNowSec(), statusMask);
+  DtcAgingWrite(dtcLogText);
+}
+
+// 发送19 06读取目标DTC扩展记录，从扩展记录中解析当前老化计数。
+void DtcAgingSend1906()
+{
+  DtcAgingResetIsoTp();
+  DtcAgingReset1906Data();
+  DtcAgingStartUdsWait(DTC_REQ_1906);
+  DtcAgingSendDiagFrame(0x06,
+                        0x19,
+                        0x06,
+                        (byte)(dtcTargetDtc >> 16),
+                        (byte)(dtcTargetDtc >> 8),
+                        (byte)dtcTargetDtc,
+                        dtcExtRecordNum,
+                        0xCC);
+  snprintf(dtcLogText, elCount(dtcLogText),
+           "%.3fs 发送19 06，DTC=0x%06X 记录号=0x%02X",
+           DtcAgingNowSec(),
+           dtcTargetDtc,
+           dtcExtRecordNum);
+  DtcAgingWrite(dtcLogText);
+}
+
+// 模块6：诊断响应解析，负责从19 02 09、19 06响应里提取目标DTC信息和老化计数。
+// 解析19 02 09正响应：每4字节为一组DTC+状态，查找目标DTC并记录状态字节。
+int DtcAgingParse190209(byte data[], int len)
+{
+  int i;
+  dword dtcValue;
+  dtcTargetDtcFound = 0;
+  dtcTargetDtcStatus = 0x00;
+
+  if ((len < 3) || (((len - 3) % 4) != 0))
+  {
+    DtcAgingStop("19 02 09正响应报文格式错误");
+    return -1;
+  }
+
+  for (i = 3; (i + 3) < len; i = i + 4)
+  {
+    dtcValue = ((dword)data[i] << 16) | ((dword)data[i + 1] << 8) | data[i + 2];
+
+    if (dtcValue == dtcTargetDtc)
+    {
+      dtcTargetDtcFound = 1;
+      dtcTargetDtcStatus = data[i + 3];
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
+// 解析19 06正响应：校验DTC、记录号和扩展记录长度，然后取出当前老化计数字节。
+int DtcAgingParse1906(byte data[], int len)
+{
+  int i;
+  dword respDtc;
+
+  if (len < 7)
+  {
+    DtcAgingStop("19 06 正响应过短");
+    return 0;
+  }
+
+  respDtc = ((dword)data[2] << 16) | ((dword)data[3] << 8) | data[4];
+  if (respDtc != dtcTargetDtc)
+  {
+    snprintf(dtcLogText, elCount(dtcLogText),
+             "%.3fs 19 06 DTC不匹配，响应=0x%06X 期望=0x%06X",
+             DtcAgingNowSec(),
+             respDtc,
+             dtcTargetDtc);
+    DtcAgingStop(dtcLogText);
+    return 0;
+  }
+
+  dtcTargetDtcStatus = data[5];
+  dtc1906DataLen = len - 6;
+
+  if (dtc1906DataLen > elCount(dtc1906Data))
+  {
+    DtcAgingStop("19 06 响应数据过长");
+    return 0;
+  }
+
+  for (i = 0; i < dtc1906DataLen; i++)
+  {
+    dtc1906Data[i] = data[6 + i];
+  }
+
+  if (dtc1906DataLen <= 0)
+  {
+    DtcAgingStop("19 06 未携带扩展记录数据");
+    return 0;
+  }
+
+  if (dtc1906Data[0] != dtcExtRecordNum)
+  {
+    snprintf(dtcLogText, elCount(dtcLogText),
+             "%.3fs 19 06 记录号不匹配，响应=0x%02X 期望=0x%02X",
+             DtcAgingNowSec(),
+             dtc1906Data[0],
+             dtcExtRecordNum);
+    DtcAgingStop(dtcLogText);
+    return 0;
+  }
+
+  if (dtc1906DataLen <= dtcCurrentAgingPos)
+  {
+    DtcAgingStop("19 06 未找到当前老化计数字节");
+    return 0;
+  }
+
+  dtcCurrentAgingValue = dtc1906Data[dtcCurrentAgingPos];
+  return 1;
+}
+
+// 模块7：状态机处理，根据当前阶段决定下一步是清故障、读19 06还是进入下一轮。
+// 14正响应处理：只有在等待清故障阶段收到0x54才合法，随后进入故障注入。
+void DtcAgingHandleReq14()
+{
+  if (dtcState == DTC_STATE_WAIT_14_CLEAR)
+  {
+    // A positive 0x54 alone is not enough; verify the target DTC is absent first.
+    dtcClearVerifyPending = 1;
+    dtcState = DTC_STATE_WAIT_190209;
+    DtcAgingSend190209();
+  }
+  else
+  {
+    DtcAgingStop("14 响应阶段不匹配");
+  }
+}
+
+// 19 02 09未找到目标DTC：普通阶段算失败；最终确认阶段则表示DTC已清除，可以重启下一大循环。
+void DtcAgingHandle190209NotFound()
+{
+  if (dtcClearVerifyPending)
+  {
+    dtcClearVerifyPending = 0;
+    snprintf(dtcLogText, elCount(dtcLogText),
+             "%.3fs 14清故障后确认目标DTC不存在，开始注入故障",
+             DtcAgingNowSec());
+    DtcAgingWrite(dtcLogText);
+    DtcAgingInjectTargetFault();
+  }
+  else if (dtcFinalClearCheckPending)
+  {
+    DtcAgingRestartAfterClear();
+  }
+  else
+  {
+    DtcAgingStop("19 02 09 未找到目标DTC");
+  }
+}
+
+// 19 02 09找到目标DTC：普通阶段继续读取19 06基线；最终确认阶段仍找到则认为老化清除失败。
+void DtcAgingHandle190209Found()
+{
+  if (dtcClearVerifyPending)
+  {
+    snprintf(dtcLogText, elCount(dtcLogText),
+             "%.3fs 14清故障后仍读到DTC=0x%06X 状态=0x%02X",
+             DtcAgingNowSec(), dtcTargetDtc, dtcTargetDtcStatus);
+    DtcAgingStop(dtcLogText);
+    return;
+  }
+
+  if (dtcFinalClearCheckPending)
+  {
+    dtcCompletedAgingCycles = DTC_AGING_TOTAL_LOOP_TIMES;
+    dtcFinalClearCheckPending = 0;
+    snprintf(dtcLogText, elCount(dtcLogText),
+             "%.3fs 已完成第%d轮确认，19 02 09仍能读到DTC=0x%06X 状态=0x%02X",
+             DtcAgingNowSec(),
+             DTC_AGING_TOTAL_LOOP_TIMES,
+             dtcTargetDtc,
+             dtcTargetDtcStatus);
+    DtcAgingStop(dtcLogText);
+    return;
+  }
+
+  snprintf(dtcLogText, elCount(dtcLogText),
+           "%.3fs 已找到目标DTC。DTC=0x%06X 状态=0x%02X",
+           DtcAgingNowSec(),
+           dtcTargetDtc,
+           dtcTargetDtcStatus);
+  DtcAgingWrite(dtcLogText);
+
+  dtcState = DTC_STATE_WAIT_1906_BASE;
+  DtcAgingSend1906();
+}
+
+// 19 02 09响应处理入口：先解析目标DTC是否存在，再按存在/不存在分支推进状态机。
+void DtcAgingHandleReq190209(byte data[], int len)
+{
+  int parseResult;
+
+  parseResult = DtcAgingParse190209(data, len);
+  if (parseResult < 0)
+  {
+    return;
+  }
+
+  if (parseResult == 0)
+  {
+    DtcAgingHandle190209NotFound();
+    return;
+  }
+
+  DtcAgingHandle190209Found();
+}
+
+// 19 06响应处理入口：第一次读取建立基线，后续每轮读取校验老化计数是否按预期变化。
+void DtcAgingHandleReq1906(byte data[], int len)
+{
+  int expectedCurrentAging;
+
+  if (!DtcAgingParse1906(data, len))
+  {
+    return;
+  }
+
+  if (dtcState == DTC_STATE_WAIT_1906_BASE)
+  {
+    dtcBaselineCurrentAging = dtcCurrentAgingValue;
+    dtcDtcBuilt = 1;
+
+    snprintf(dtcLogText, elCount(dtcLogText),
+             "%.3fs 基线19 06正常。状态=0x%02X 记录号=0x%02X 当前老化计数=0x%02X",
+             DtcAgingNowSec(),
+             dtcTargetDtcStatus,
+             dtc1906Data[0],
+             dtcBaselineCurrentAging);
+    DtcAgingWrite(dtcLogText);
+
+    if (dtcBaselineCurrentAging != 0x00)
+    {
+      snprintf(dtcLogText, elCount(dtcLogText),
+               "%.3fs 基线当前老化计数异常：0x%02X，期望=0x00",
+               DtcAgingNowSec(),
+               dtcBaselineCurrentAging);
+      DtcAgingWriteResult(DTC_FAULT_PRESSURE_STATUS_FAIL, dtcLogText);
+      dtcAgingStopKeepLastStatus = 1;
+      DtcAgingStop("");
+      return;
+    }
+
+    DtcAgingStartSleep();
+  }
+  else if (dtcState == DTC_STATE_WAIT_1906_AFTER_WAKE)
+  {
+    dtcCompletedAgingCycles++;
+    // 期望老化计数按轮次逐步递增：基线值 + 当前已完成轮次 - 1。
+    // 例：上一轮期望0x01，本轮期望0x02；如果实际读到0x03，说明计数发生跳变。
+    expectedCurrentAging = dtcBaselineCurrentAging + dtcCompletedAgingCycles - 1;
+
+    if (expectedCurrentAging < dtcBaselineCurrentAging)
+    {
+      expectedCurrentAging = dtcBaselineCurrentAging;
+    }
+
+    if (expectedCurrentAging >= DTC_AGING_NEED_TIMES)
+    {
+      expectedCurrentAging = DTC_AGING_NEED_TIMES - 1;
+    }
+
+    // 每轮19 06的当前老化计数直接作为正式判定写入报告。
+    if (dtcCurrentAgingValue == expectedCurrentAging)
+    {
+      snprintf(dtcLogText, elCount(dtcLogText),
+               "%.3fs 第%d轮19 06正常。状态=0x%02X 记录号=0x%02X 当前老化计数=0x%02X 期望=0x%02X",
+               DtcAgingNowSec(),
+               dtcCompletedAgingCycles,
+               dtcTargetDtcStatus,
+               dtc1906Data[0],
+               dtcCurrentAgingValue,
+               expectedCurrentAging);
+      DtcAgingWriteResult(DTC_FAULT_PRESSURE_STATUS_PASS, dtcLogText);
+    }
+    else if (DTC_AGING_OBSERVE_ONLY)
+    {
+      snprintf(dtcLogText, elCount(dtcLogText),
+               "%.3fs [警告] 第%d轮19 06老化计数不匹配。状态=0x%02X 记录号=0x%02X 当前老化计数=0x%02X 期望=0x%02X，继续观察不拦停",
+               DtcAgingNowSec(),
+               dtcCompletedAgingCycles,
+               dtcTargetDtcStatus,
+               dtc1906Data[0],
+               dtcCurrentAgingValue,
+               expectedCurrentAging);
+      DtcAgingWrite(dtcLogText);
+    }
+    else
+    {
+      snprintf(dtcLogText, elCount(dtcLogText),
+               "%.3fs 第%d轮19 06老化计数判定失败。状态=0x%02X 记录号=0x%02X 当前老化计数=0x%02X 期望=0x%02X",
+               DtcAgingNowSec(),
+               dtcCompletedAgingCycles,
+               dtcTargetDtcStatus,
+               dtc1906Data[0],
+               dtcCurrentAgingValue,
+               expectedCurrentAging);
+      DtcAgingWriteResult(DTC_FAULT_PRESSURE_STATUS_FAIL, dtcLogText);
+      // 保留最后一条失败状态，防止停止摘要覆盖HTML中的失败判定。
+      dtcAgingStopKeepLastStatus = 1;
+      DtcAgingStop("");
+      return;
+    }
+
+    if (dtcCompletedAgingCycles >= DTC_AGING_NEED_TIMES)
+    {
+      dtcFinalClearCheckPending = 1;
+      snprintf(dtcLogText, elCount(dtcLogText),
+               "%.3fs 已完成第%d次19 06读取，下一轮第%d轮将发送19 02 09确认DTC是否清除",
+               DtcAgingNowSec(),
+               dtcCompletedAgingCycles,
+               DTC_AGING_TOTAL_LOOP_TIMES);
+      DtcAgingWrite(dtcLogText);
+      DtcAgingStartSleep();
+    }
+    else
+    {
+      DtcAgingStartSleep();
+    }
+  }
+  else
+  {
+    DtcAgingStop("19 06 响应阶段不匹配");
+  }
+}
+
+// 模块8：UDS响应总分发，先处理负响应，再按当前挂起请求分发到对应处理函数。
+// UDS响应总分发：先处理负响应和0x78，再根据dtcPendingReq分发到对应服务处理函数。
+void DtcAgingProcessUdsResponse(byte data[], int len)
+{
+  char reqName[16];
+
+  if (len <= 0)
+  {
+    DtcAgingStop("诊断响应长度无效");
+    return;
+  }
+
+  if (data[0] == 0x7F)
+  {
+    if (len < 3)
+    {
+      DtcAgingStop("负响应长度无效");
+      return;
+    }
+
+    if (((dtcPendingReq == DTC_REQ_14) && (data[1] != 0x14)) ||
+        (((dtcPendingReq == DTC_REQ_190209) || (dtcPendingReq == DTC_REQ_1906)) &&
+         (data[1] != 0x19)))
+    {
+      snprintf(dtcLogText, elCount(dtcLogText),
+               "%.3fs 忽略非当前请求的负响应：7F %02X %02X",
+               DtcAgingNowSec(), data[1], data[2]);
+      DtcAgingWrite(dtcLogText);
+      return;
+    }
+
+    dtcLastNrc = data[2];
+
+    if (dtcLastNrc == 0x78)
+    {
+      DtcAgingGetReqName(dtcPendingReq, reqName);
+      snprintf(dtcLogText, elCount(dtcLogText),
+               "%.3fs %s 收到0x78，等待%dms",
+               DtcAgingNowSec(),
+               reqName,
+               DTC_UDS_P2_STAR_MS);
+      DtcAgingWrite(dtcLogText);
+      DtcAgingStartP2StarWait();
+      return;
+    }
+
+    DtcAgingGetReqName(dtcPendingReq, reqName);
+    snprintf(dtcLogText, elCount(dtcLogText),
+             "%.3fs %s 收到负响应 NRC=0x%02X",
+             DtcAgingNowSec(),
+             reqName,
+             dtcLastNrc);
+    DtcAgingStopUdsWait();
+    DtcAgingStop(dtcLogText);
+    return;
+  }
+
+  switch (dtcPendingReq)
+  {
+    case DTC_REQ_14:
+      if (data[0] != 0x54)
+      {
+        return;
+      }
+
+      if ((len >= 1) && (data[0] == 0x54))
+      {
+        DtcAgingStopUdsWait();
+        DtcAgingHandleReq14();
+      }
+      else
+      {
+        DtcAgingStopUdsWait();
+        DtcAgingStop("14 正响应格式错误");
+      }
+      break;
+
+    case DTC_REQ_190209:
+      if ((data[0] != 0x59) || ((len >= 2) && (data[1] != 0x02)))
+      {
+        return;
+      }
+
+      if ((len >= 3) && (data[0] == 0x59) && (data[1] == 0x02))
+      {
+        DtcAgingStopUdsWait();
+        DtcAgingHandleReq190209(data, len);
+      }
+      else
+      {
+        DtcAgingStopUdsWait();
+        DtcAgingStop("19 02 09 正响应格式错误");
+      }
+      break;
+
+    case DTC_REQ_1906:
+      if ((data[0] != 0x59) || ((len >= 2) && (data[1] != 0x06)))
+      {
+        return;
+      }
+
+      if ((len >= 2) && (data[0] == 0x59) && (data[1] == 0x06))
+      {
+        DtcAgingStopUdsWait();
+        DtcAgingHandleReq1906(data, len);
+      }
+      else
+      {
+        DtcAgingStopUdsWait();
+        DtcAgingStop("19 06 正响应格式错误");
+      }
+      break;
+
+    default:
+      DtcAgingStop("收到诊断响应时当前没有挂起请求");
+      break;
+  }
+}
+
+// 模块9：测试启动入口，负责清场、初始化并进入第一次制造DTC流程。
+void DtcAgingStart()
+{
+  if (dtcTestRunning)
+  {
+    snprintf(dtcLogText, elCount(dtcLogText), "DTC老化测试已经在运行");
+    DtcAgingWrite(dtcLogText);
+    return;
+  }
+
+  SrOpenLogFile();
+  StressWriteLog("===== DTC老化测试 =====");
+  DtcAgingCancelAllTimers();
+  DtcAgingStopUdsWait();
+  DtcAgingResetState();
+
+  dtcTestRunning = 1;
+  @sysvar::Vehicle_input::Message_MissingTime::ONEBOX_1_0x98 = 0;
+  @sysvar::Vehicle_input::MSG::ONEBOX_1_0x98 = 0;
+
+  snprintf(dtcLogText, elCount(dtcLogText),
+           "%.3fs 启动DTC老化测试。DTC=0x%06X 记录号=0x%02X 目标老化次数=%d 总循环次数=%d（前10轮读19 06，第11轮读19 02 09，读不到DTC后重新制造并循环）",
+           DtcAgingNowSec(),
+           dtcTargetDtc,
+           dtcExtRecordNum,
+           DTC_AGING_NEED_TIMES,
+           DTC_AGING_TOTAL_LOOP_TIMES);
+  DtcAgingWrite(dtcLogText);
+
+  DtcAgingStartWakeup(DTC_PURPOSE_BUILD_DTC);
+}
+
+
+
+// ================== 模式切换相关函数 ==================
+// 切换模式前先停止当前模式，保证不同测试之间不会有timer或状态互相干扰。
+void StopCurrentMode()
+{
+  if (gActiveMode == MODE_ELECTRICAL)
+  {
+    ElecStop();
+  }
+  else if (gActiveMode == MODE_MSG_CYCLE)
+  {
+    MsgStop();
+  }
+  else if (gActiveMode == MODE_SUSPEND_RESUME)
+  {
+    SrStop();
+  }
+  else if (gActiveMode == MODE_DTC_AGING)
+  {
+    dtcAgingNormalStopRequested = 1;
+    DtcAgingStop("DTC老化测试停止");
+  }
+}
+
+// 模式切换统一入口：停止旧模式、同步系统变量、启动新模式。
+void SwitchMode(int newMode)
+{
+  if (newMode == gActiveMode) return;
+
+  StopCurrentMode();
+  gActiveMode = newMode;
+
+  if (newMode == MODE_ELECTRICAL)
+  {
+    ElecStart();
+  }
+  else if (newMode == MODE_MSG_CYCLE)
+  {
+    MsgStart();
+  }
+  else if (newMode == MODE_SUSPEND_RESUME)
+  {
+    SrStart();
+  }
+  else if (newMode == MODE_DTC_AGING)
+  {
+    DtcAgingStart();
+  }
+}
+
+
+// ================== CAPL事件处理 ==================
+// 测量开始时初始化各模式状态，并把所有模式系统变量复位为未开启。
+void DtcFaultControllerInitialize()
+{
+  DtcFaultControllerResetPressureStatus();
+  SrCloseLogFile();
+  ElecResetState();
+  MsgReset();
+  SrResetState();
+  DtcAgingResetState();
+  PwrStop();
+  gActiveMode = MODE_NONE;
+}
+
+// ================== 电检定时器事件 ==================
+// 电检启动延时到期后，先进入扩展诊断会话。
+on timer elecStartTimer
+{
+  elecCurrentIndex = 0;
+  ElecSend10Session();
+}
+
+// 电检DID读取间隔timer：逐个读取DID，全部读完后比较并复位ECU。
+on timer elecWaitTimer
+{
+  if (gActiveMode != MODE_ELECTRICAL) return;
+
+  if (elecCurrentIndex >= 7)
+  {
+    ElecCompareAll();
+    ElecShowResult();
+    ElecSendReset();
+    return;
+  }
+
+  ElecReadDid();
+}
+
+// ECU复位后等待一段时间，再开始下一轮电检循环。
+on timer elecLoopTimer
+{
+  if (gActiveMode != MODE_ELECTRICAL) return;
+
+  elecCurrentIndex = 0;
+  ElecSend10Session();
+}
+
+// ================== 休眠唤醒测试定时器事件 ==================
+// 休眠唤醒主循环timer：srWorkState=1启动唤醒监控，srWorkState=0检查结果并进入休眠。
+// Suspend/resume loop: wake and verify target messages, then enter the sleep phase.
+on timer srCycleTimer
+{
+  char resultText[256];
+
+  if (gActiveMode != MODE_SUSPEND_RESUME || !srTestEnabled) return;
+
+  srCurrentTime = timeNow() / 100000.0;
+
+  if (srWorkState == 1)
+  {
+    snprintf(resultText, elCount(resultText),
+             "第%d轮开始唤醒：发送0x601、PowerMode=2、ArmingSts=0；信号完成后等待%d ms再开始监控目标报文。",
+             srTestCount + 1, SR_WAKEUP_MONITOR_DELAY_MS);
+    SrWriteLogLine(resultText);
+    DtcFaultControllerPublishPressureStatus(DTC_FAULT_PRESSURE_STATUS_INFO, resultText);
+    PwrStartWakeup(PWR_OWNER_SUSPEND_RESUME, 0, SR_WAKEUP_DURATION_MS);
+    srWorkState = 0;
+  }
+  else if (srWorkState == 0)
+  {
+    SrStopMonitoring();
+    SrCheckMonitorResult();
+    srWorkState = 2;
+    PwrStartSleep(PWR_OWNER_SUSPEND_RESUME, 0, 60, 60, SR_ECU_SLEEP_WAIT_MS);
+  }
+}
+// 公共0x601周期timer：owner仍有效时继续发送下一帧0x601。
+on timer pwrSend601Timer
+{
+  if (!PwrOwnerActive() || !pwrIs601Sending) return;
+
+  PwrSend601Frame();
+  setTimer(pwrSend601Timer, pwrSend601IntervalMs);
+}
+
+// 公共唤醒步骤1：设置FuelVehPowerMode=2。
+on timer pwrWakePowerModeTimer
+{
+  cancelTimer(pwrWakePowerModeTimer);
+  if (!PwrOwnerActive() || pwrAction != PWR_ACTION_WAKE) return;
+
+  $CAN1::CGW::FLZCU_9::FLZCU_9_PowerMode = 2;
+  snprintf(stressLogText, elCount(stressLogText),
+           "发送唤醒信号 PowerMode=2，%dms后发送ArmingSts=0",
+           pwrWakeArmingDelayMs);
+  StressWriteLog(stressLogText);
+  setTimer(pwrWakeArmingTimer, pwrWakeArmingDelayMs);
+}
+
+// 公共唤醒步骤2：设置ArmingSts=0，然后等待唤醒稳定时间。
+on timer pwrWakeArmingTimer
+{
+  cancelTimer(pwrWakeArmingTimer);
+  if (!PwrOwnerActive() || pwrAction != PWR_ACTION_WAKE) return;
+
+  $CAN1::CGW::FLZCU_9::FLZCU_9_ArmingSts = 0;
+  PwrSendPowerModeFrame(2, 0);
+  SrOnWakeSignalSent();
+  snprintf(stressLogText, elCount(stressLogText),
+           "发送唤醒信号 ArmingSts=0，%dms后开始诊断",
+           pwrWakeStableMs);
+  StressWriteLog(stressLogText);
+  setTimer(pwrWakeDoneTimer, pwrWakeStableMs);
+}
+
+// 公共唤醒完成timer：稳定时间到后回调对应业务。
+on timer pwrWakeDoneTimer
+{
+  cancelTimer(pwrWakeDoneTimer);
+  if (!PwrOwnerActive() || pwrAction != PWR_ACTION_WAKE) return;
+
+  PwrHandleWakeDone();
+}
+
+// 公共休眠步骤1：PowerMode切至0后发送ArmingSts=1。
+on timer pwrSleepArmingTimer
+{
+  cancelTimer(pwrSleepArmingTimer);
+  if (!PwrOwnerActive() || pwrAction != PWR_ACTION_SLEEP) return;
+
+  // 先独立发送PowerMode=0，再发送ArmingSts=1，确保总线上可观察到完整的2->1->0休眠切换过程。
+  $CAN1::CGW::FLZCU_9::FLZCU_9_PowerMode = 0;
+  $CAN1::CGW::FLZCU_9::FLZCU_9_ArmingSts = 0;
+  PwrSendPowerModeFrame(0, 0);
+  $CAN1::CGW::FLZCU_9::FLZCU_9_ArmingSts = 1;
+  PwrSendPowerModeFrame(0, 1);
+  snprintf(stressLogText, elCount(stressLogText),
+           "发送休眠信号 PowerMode=0、ArmingSts=1，%dms后发送节点离线",
+           pwrSleepNodeOffDelayMs);
+  StressWriteLog(stressLogText);
+  setTimer(pwrSleepNodeOffTimer, pwrSleepNodeOffDelayMs);
+}
+
+// 公共休眠步骤2：设置GCW51离线。
+on timer pwrSleepNodeOffTimer
+{
+  cancelTimer(pwrSleepNodeOffTimer);
+  if (!PwrOwnerActive() || pwrAction != PWR_ACTION_SLEEP) return;
+
+  @sysvar::Vehicle_input::Node::CGW = 1;
+  snprintf(stressLogText, elCount(stressLogText),
+           "发送节点离线信号，开始等待%dms",
+           pwrSleepDoneDelayMs);
+  StressWriteLog(stressLogText);
+  setTimer(pwrSleepDoneTimer, pwrSleepDoneDelayMs);
+}
+
+// 公共休眠完成timer：休眠等待时间到后回调对应业务。
+on timer pwrSleepDoneTimer
+{
+  cancelTimer(pwrSleepDoneTimer);
+  if (!PwrOwnerActive() || pwrAction != PWR_ACTION_SLEEP) return;
+
+  PwrHandleSleepDone();
+}
+// 休眠唤醒监控timer：监控开启期间保持周期运行，实际报文检测在on message *里完成。
+// 唤醒信号完成后等待一段时间，再开始统计目标报文，避开ECU启动过渡期。
+on timer srWakeMonitorDelayTimer
+{
+  char resultText[256];
+
+  cancelTimer(srWakeMonitorDelayTimer);
+  if (gActiveMode != MODE_SUSPEND_RESUME || !srTestEnabled) return;
+
+  SrResetAllMonitor();
+  SrStartMonitoring();
+  srCurrentTime = timeNow() / 100000.0;
+  snprintf(resultText, elCount(resultText),
+           "第%d轮唤醒信号后等待%d ms完成，开始监控目标报文。",
+           srTestCount + 1, SR_WAKEUP_MONITOR_DELAY_MS);
+  SrWriteLogLine(resultText);
+  DtcFaultControllerPublishPressureStatus(DTC_FAULT_PRESSURE_STATUS_INFO, resultText);
+}
+
+on timer srMonitorTimer
+{
+  if (gActiveMode != MODE_SUSPEND_RESUME || !srTestEnabled) return;
+
+  if (srIsMonitoring)
+  {
+    setTimer(srMonitorTimer, SR_MONITOR_CHECK_INTERVAL);
+  }
+}
+
+
+
+
+
+// 睡眠阶段监控结束：统计轮次并安排下一轮唤醒。
+// End the sleep message observation window, record the result and schedule the next round.
+on timer srSleepPhaseMonitorTimer
+{
+  char resultText[256];
+
+  if (gActiveMode != MODE_SUSPEND_RESUME || !srTestEnabled) return;
+
+  srCurrentTime = timeNow() / 100000.0;
+  if (!srSleepIllegalMessageDetected)
+  {
+    snprintf(resultText, elCount(resultText),
+             "%.5fms 第%d轮休眠报文检查通过：%d ms内未收到目标报文。",
+             srCurrentTime, srTestCount + 1, SR_SLEEP_MONITOR_DURATION);
+    SrWriteLogLine(resultText);
+    DtcFaultControllerPublishPressureStatus(DTC_FAULT_PRESSURE_STATUS_PASS, resultText);
+  }
+
+  srIsSleepPhase = 0;
+  cancelTimer(srSleepPhaseMonitorTimer);
+  srTestCount++;
+  srWorkState = 1;
+  setTimer(srCycleTimer, SR_SLEEP_DURATION_MS - SR_ECU_SLEEP_WAIT_MS - SR_SLEEP_MONITOR_DURATION);
+}
+// ================== DTC老化测试定时器事件 ==================
+// 模块说明：这一组定时器组成DTC老化主状态机，依次驱动保活、唤醒、故障观察、休眠等待和UDS超时。
+
+on timer dtcSleepVerifyStartTimer
+{
+  cancelTimer(dtcSleepVerifyStartTimer);
+  if (gActiveMode != MODE_DTC_AGING || !dtcTestRunning) return;
+
+  dtcSleepVerifyActive = 1;
+  dtcSleepIllegalMessageDetected = 0;
+  dtcSleepIllegalMessageId = 0x000;
+  snprintf(dtcLogText, elCount(dtcLogText),
+           "%.3fs 开始休眠静默检查，持续%dms",
+           DtcAgingNowSec(), DTC_SLEEP_VERIFY_WINDOW_MS);
+  DtcAgingWrite(dtcLogText);
+}
+
+on timer dtcFaultObserveTimer
+{
+  cancelTimer(dtcFaultObserveTimer);
+  if (gActiveMode != MODE_DTC_AGING || !dtcTestRunning || (dtcState != DTC_STATE_WAIT_FAULT_OBSERVE)) return;
+
+  snprintf(dtcLogText, elCount(dtcLogText), "%.3fs 故障观察完成，开始检查DTC", DtcAgingNowSec());
+  DtcAgingWrite(dtcLogText);
+
+  dtcState = DTC_STATE_WAIT_190209;
+  DtcAgingSend190209();
+}
+
+
+// UDS超时处理：P2或P2*窗口到期仍未收到最终响应，则停止老化并打印超时原因。
+on timer dtcUdsTimer
+{
+  char reqName[16];
+
+  if (gActiveMode != MODE_DTC_AGING || !dtcTestRunning || (dtcPendingReq == DTC_REQ_NONE)) return;
+
+  DtcAgingGetReqName(dtcPendingReq, reqName);
+
+  if (dtcIsoTpWaitingCf)
+  {
+    snprintf(dtcLogText, elCount(dtcLogText),
+             "%.3fs %s ISO-TP连续帧超时%dms",
+             DtcAgingNowSec(), reqName, DTC_ISOTP_N_CR_MS);
+    DtcAgingStopUdsWait();
+    DtcAgingStop(dtcLogText);
+    return;
+  }
+
+  if (dtcP2Extended)
+  {
+    snprintf(dtcLogText, elCount(dtcLogText),
+             "%.3fs %s P2*超时%dms",
+             DtcAgingNowSec(),
+             reqName,
+             DTC_UDS_P2_STAR_MS);
+  }
+  else
+  {
+    snprintf(dtcLogText, elCount(dtcLogText),
+             "%.3fs %s P2超时%dms",
+             DtcAgingNowSec(),
+             reqName,
+             DTC_UDS_P2_MS);
+  }
+
+  DtcAgingStopUdsWait();
+  DtcAgingStop(dtcLogText);
+}
+
+
+// ================== CAN消息接收事件 ==================
+// 全局报文入口：根据当前模式分别处理电检响应、消息周期监控、休眠阶段非法报文检测。
+on message *
+{
+  int i;
+  byte MSG_RawData[64];
+
+  // ---- 消息周期监控 + CRC ----
+  if (gActiveMode == MODE_MSG_CYCLE && msgMonitoringActive)
+  {
+    msgCurrentTime = timeNow() / 100000.0;
+
+    for (i = 0; i < this.dlc; i++)
+    {
+      MSG_RawData[i] = this.byte(i);
+    }
+
+    MsgCheckRadarCrc(this.ID, MSG_RawData, this.dlc);
+
+    // 再做周期检查
+    for (i = 0; i < msgCount; i++)
+    {
+      if (msgIdMap[i] == this.ID)
+      {
+        if (msgLastTime[i] > 0)
+        {
+          msgActualPeriod = (msgCurrentTime - msgLastTime[i]) * 1000;
+          msgDeviation = ((msgActualPeriod - msgExpectedPeriod[i]) / msgExpectedPeriod[i]) * 100;
+
+          MsgCheckPeriod(i, msgActualPeriod, msgCurrentTime);
+        }
+
+        msgLastTime[i] = msgCurrentTime;
+        break;
+      }
+    }
+
+    return;
+  }
+  // ---- DTC老化休眠静默监控 ----
+  if (gActiveMode == MODE_DTC_AGING)
+  {
+    DtcAgingRecordSleepMessage(this.ID);
+  }
+
+  // ---- 休眠唤醒监控 ----
+  SrRecordTargetMessage(this.ID, this.dlc);
+}
+
+// DTC老化专用诊断响应入口：只在DTC老化运行且存在挂起请求时处理0x7C3。
+// 支持普通单帧、CAN FD扩展单帧和ISO-TP多帧响应。
+on message 0x7C3
+{
+  int i, idx, len, pciType, sfLen, ffLen, copyPos, sn, rxDataLen;
+
+  // ---- 电检诊断响应 ----
+  if (gActiveMode == MODE_ELECTRICAL && this.ID == 0x7C3)
+  {
+    if (elecCurrentIndex >= 7) return;
+
+    idx = elecCurrentIndex;
+    len = elecDidLen[idx];
+    rxDataLen = canGetDataLength(this);
+
+    if (rxDataLen < 5)
+    {
+      snprintf(stressLogText, elCount(stressLogText),
+               "电检响应长度不足，DLC=%d", rxDataLen);
+      ElecPutToPanel(stressLogText);
+      return;
+    }
+
+    if (this.byte(1) == 0x50)
+    {
+      elecCurrentIndex = 0;
+      setTimer(elecWaitTimer, 300);
+      return;
+    }
+
+    elecRespDid = (this.byte(3) << 8) | this.byte(4);
+
+    if (elecRespDid != elecDidList[idx])
+    {
+      snprintf(stressLogText, elCount(stressLogText),
+               "电检响应DID不匹配，当前期望=0x%04X 实际=0x%04X",
+               elecDidList[idx], elecRespDid);
+      ElecPutToPanel(stressLogText);
+      return;
+    }
+
+    if ((elecDataStart + len) > rxDataLen)
+    {
+      snprintf(stressLogText, elCount(stressLogText),
+               "电检DID=0x%04X数据长度不足，期望=%d 实际可用=%d",
+               elecRespDid, len, rxDataLen - elecDataStart);
+      ElecPutToPanel(stressLogText);
+      return;
+    }
+
+    for (i = 0; i < 512; i++)
+    {
+      elecBuf[i] = 0;
+    }
+
+    snprintf(elecTempStr, elCount(elecTempStr), "读取 DID: %04X\n", elecRespDid);
+    ElecPutToPanel(elecTempStr);
+
+    for (i = 0; i < len; i++)
+    {
+      snprintf(elecTmp, elCount(elecTmp), " %02X", this.byte(elecDataStart + i));
+      if (strlen(elecBuf) < elCount(elecBuf) - 4)
+      {
+        strncat(elecBuf, elecTmp, elCount(elecBuf) - strlen(elecBuf) - 1);
+      }
+    }
+
+    for (i = 0; i < len; i++)
+    {
+      elecReadData[idx][i] = this.byte(elecDataStart + i);
+    }
+
+    elecCurrentIndex++;
+    setTimer(elecWaitTimer, 300);
+    return;
+  }
+  if (gActiveMode != MODE_DTC_AGING || !dtcTestRunning) return;
+  if (dtcPendingReq == DTC_REQ_NONE) return;
+
+  rxDataLen = canGetDataLength(this);
+  if (rxDataLen <= 0) return;
+  if (rxDataLen < 2)
+  {
+    DtcAgingStop("ISO-TP诊断响应长度不足");
+    return;
+  }
+
+  pciType = this.byte(0) & 0xF0;
+
+  if ((this.byte(0) != 0x00) && (pciType == 0x00))
+  {
+    sfLen = this.byte(0) & 0x0F;
+    if (sfLen <= 0) return;
+    if (sfLen > (rxDataLen - 1))
+    {
+      DtcAgingStop("ISO-TP单帧声明长度超过实际数据长度");
+      return;
+    }
+
+    DtcAgingResetIsoTp();
+    dtcIsoTpLen = sfLen;
+
+    for (i = 0; (i < sfLen) && ((1 + i) < rxDataLen); i++)
+    {
+      dtcIsoTpBuf[i] = this.byte(1 + i);
+    }
+
+    DtcAgingProcessUdsResponse(dtcIsoTpBuf, dtcIsoTpLen);
+    return;
+  }
+
+  if ((this.byte(0) == 0x00) && (this.byte(1) > 0))
+  {
+    sfLen = this.byte(1);
+    if (sfLen <= 0) return;
+    if (sfLen > (rxDataLen - 2))
+    {
+      DtcAgingStop("CAN FD扩展单帧声明长度超过实际数据长度");
+      return;
+    }
+
+    DtcAgingResetIsoTp();
+    dtcIsoTpLen = sfLen;
+
+    for (i = 0; (i < sfLen) && ((2 + i) < rxDataLen); i++)
+    {
+      dtcIsoTpBuf[i] = this.byte(2 + i);
+    }
+
+    DtcAgingProcessUdsResponse(dtcIsoTpBuf, dtcIsoTpLen);
+    return;
+  }
+
+  if (pciType == 0x10)
+  {
+    ffLen = ((this.byte(0) & 0x0F) << 8) | this.byte(1);
+
+    if ((ffLen <= 0) || (ffLen > elCount(dtcIsoTpBuf)))
+    {
+      DtcAgingStop("ISO-TP首帧长度无效");
+      return;
+    }
+
+    DtcAgingResetIsoTp();
+    dtcIsoTpTargetLen = ffLen;
+    dtcIsoTpWaitingCf = 1;
+    dtcIsoTpNextSn = 1;
+
+    copyPos = 0;
+    for (i = 2; (i < rxDataLen) && (copyPos < dtcIsoTpTargetLen); i++)
+    {
+      dtcIsoTpBuf[copyPos] = this.byte(i);
+      copyPos++;
+    }
+
+    dtcIsoTpPos = copyPos;
+    if (dtcIsoTpPos >= dtcIsoTpTargetLen)
+    {
+      dtcIsoTpWaitingCf = 0;
+      dtcIsoTpLen = dtcIsoTpTargetLen;
+      DtcAgingProcessUdsResponse(dtcIsoTpBuf, dtcIsoTpLen);
+      return;
+    }
+
+    DtcAgingSendFlowControl();
+    cancelTimer(dtcUdsTimer);
+    setTimer(dtcUdsTimer, DTC_ISOTP_N_CR_MS);
+    return;
+  }
+
+  if (pciType == 0x20)
+  {
+    if (!dtcIsoTpWaitingCf) return;
+
+    sn = this.byte(0) & 0x0F;
+    if (sn != dtcIsoTpNextSn)
+    {
+      DtcAgingStop("ISO-TP连续帧序号错误");
+      return;
+    }
+
+    copyPos = dtcIsoTpPos;
+    for (i = 1; (i < rxDataLen) && (copyPos < dtcIsoTpTargetLen); i++)
+    {
+      dtcIsoTpBuf[copyPos] = this.byte(i);
+      copyPos++;
+    }
+
+    dtcIsoTpPos = copyPos;
+    dtcIsoTpNextSn = (dtcIsoTpNextSn + 1) & 0x0F;
+
+    if (dtcIsoTpPos >= dtcIsoTpTargetLen)
+    {
+      dtcIsoTpWaitingCf = 0;
+      dtcIsoTpLen = dtcIsoTpTargetLen;
+      DtcAgingProcessUdsResponse(dtcIsoTpBuf, dtcIsoTpLen);
+    }
+    else
+    {
+      cancelTimer(dtcUdsTimer);
+      setTimer(dtcUdsTimer, DTC_ISOTP_N_CR_MS);
+    }
+
+    return;
+  }
+}
+
+// 测量停止时统一停止当前模式，释放timer和诊断状态。
+void DtcFaultControllerShutdown()
+{
+  StopCurrentMode();
+  PwrStop();
+  PwrShutdownItechPower();
+  gActiveMode = MODE_NONE;
+}
+
+// 压力测试由测试用例直接启动；启动新的压力测试时会先停止当前测试模式。
+int DtcFaultControllerStartPressureTest(int pressureType)
+{
+  if ((pressureType < MODE_ELECTRICAL) || (pressureType > MODE_DTC_AGING))
+  {
+    return 0;
+  }
+
+  DtcFaultControllerShutdown();
+  DtcFaultControllerInitialize();
+  if(PwrInitializeItechPower() != 0)
+  {
+    return 0;
+  }
+
+  SwitchMode(pressureType);
+  return 1;
+}
+
+// 用户主动结束压力测试时，停止当前模式并让测试用例自然结束。
+int DtcFaultControllerStopPressureTest()
+{
+  if ((gActiveMode < MODE_ELECTRICAL) || (gActiveMode > MODE_DTC_AGING))
+  {
+    return 0;
+  }
+
+  StopCurrentMode();
+  PwrStop();
+  PwrShutdownItechPower();
+  gActiveMode = MODE_NONE;
+  return 1;
+}
+// 测试用例通过该状态确认压力测试仍在运行。
+int DtcFaultControllerIsPressureTestActive(int pressureType)
+{
+  return (gActiveMode == pressureType);
+}

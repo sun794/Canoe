@@ -1,0 +1,1555 @@
+/*@!Encoding:936*/
+includes
+{
+  #include "ReportAndLog.cin"
+}
+
+variables
+{
+  const dword kDutNmCanId = 0x63F;
+  const dword kInvalidWakeupCanId = 0x123;
+  const dword kTesterPresentCanId = 0x743;
+  const int kNmPduExpectedDlc = 8;
+  const int kDutNmExpectedDlc = 8;
+  const int kExpectedDutSourceNodeId = 0x3F;
+  const int kExpectedDutRmrValue = 0;
+  const int kExpectedDutReserved1Value = 0;
+  const int kPowerModeOff = 0;
+  const int kPowerModeOn = 2;
+  const int kPowerModeArmingSuccess = 1;
+  const dword kNmPduSimulationCycleMs = 200;
+  const dword kTc7NmPduSimulationCycleMs = 200;
+  const dword kInvalidWakeupFrameIntervalMs = 20;
+  const dword kDutNmPollIntervalMs = 20;
+  const dword kPowerModeSimulationCycleMs = 100;
+  const dword kPowerModeOffToArmingDelayMs = 200;
+  const dword kArmingStsHoldDurationMs = 2000;
+  const dword kPowerModeKeepAliveCycleMs = 50;
+  const dword kRmsDurationMs = 3000;
+  const dword kRmsStimulusWindowMs = 4000;
+  const dword kRmsStimulusDelayMs = 300;
+  const dword kDiagnosticHoldDurationMs = 6000;
+  const dword kDiagnosticHoldCaptureMarginMs = 500;
+  const dword kPowerModeOnHoldDurationMs = 8000;
+  const dword kPowerModeHoldObservationMs = 2500;
+  const dword kApplicationSilenceWindowMs = 600;
+  const dword kApplicationSilenceTimeoutMs = 10000;
+  const dword kTc8ToTc9DelayMs = 4000;
+  const dword kRssToPbsmDurationMs = 2500;
+  const dword kDowHoldDurationMs = 210000;
+  const dword kDowHoldToleranceMs = 1200;
+  const dword kNmStateObservationMs = 1200;
+  const dword kWakeupFirstFrameLimitMs = 100;
+  const dword kWakeupAllFramesLimitMs = 300;
+  const dword kInvalidWakeupObservationMs = 4000;
+  const dword kBsmNoWakeObservationMs = 3000;
+  const dword kDutNmCycleMs = 1000;
+  const float kNmCycleTolerancePercent = 10.0;
+  const dword kBusSleepLoadSettleMs = 1000;
+  const long kCan1BusSleepMaxLoadPercent = 1;
+
+  // Configure these values after the released NM PDU definition is available.
+  const int kNmPduRmrByteIndex = -1;
+  const int kNmPduRmrMask = 0x00;
+
+  const int kDutFrameNone = 0;
+  const int kDutFrameNm = 1;
+  const int kDutFrameApp1 = 2;
+  const int kDutFrameApp2 = 3;
+
+  message FL_DA_CANFD_RLCR::NM_PDU gNmPduTx;
+  message FL_DA_CANFD_RLCR::FLZCU_9 gPowerModeTx;
+  message 0x123 gInvalidWakeupTx;
+  message 0x743 gTesterPresentTx;
+  msTimer gNmPduTxTimer;
+  msTimer gPowerModeTxTimer;
+
+  int gNmPduSimulationActive;
+  dword gNmPduSimulationPeriodMs;
+  int gNmPduRmrEnabled;
+  int gPowerModeSimulationActive;
+  dword gPowerModeSimulationPeriodMs;
+  int gPowerModeValue;
+  int gPowerModeArmingValue;
+  int gPowerModeFuelValue;
+
+
+  int gDutObservationActive;
+  int gDutFirstFrameType;
+  int gDutNmFrameCount;
+  int gDutNmDlcErrorCount;
+  int gDutNmCycleCount;
+  int gDutApp1FrameCount;
+  int gDutApp2FrameCount;
+  dword gDutFirstFrameTimestamp;
+  dword gDutFirstNmTimestamp;
+  dword gDutFirstApp1Timestamp;
+  dword gDutFirstApp2Timestamp;
+  dword gDutLastNmTimestamp;
+  dword gDutLastAppTimestamp;
+  dword gDutPreviousNmTimestamp;
+  float gDutNmMinCycleMs;
+  float gDutNmMaxCycleMs;
+  int gDutNmSourceNodeId;
+  int gDutRmrValue;
+  int gDutNmReserved1;
+  int gDutWakeupPoweron;
+  int gDutWakeupNm;
+  int gDutWakeupDiag;
+  int gDutWakeupDow;
+  int gDutAwakePoweron;
+  int gDutAwakeNm;
+  int gDutAwakeDiag;
+  int gDutAwakeDow;
+}
+
+float NmElapsedMs(dword startTimestamp, dword endTimestamp)
+{
+  if(endTimestamp < startTimestamp)
+    return 0.0;
+
+  return (endTimestamp - startTimestamp) / 100.0;
+}
+
+int NmIsWithinTolerance(float actual, float expected, float tolerancePercent)
+{
+  if(actual < (expected * (100.0 - tolerancePercent) / 100.0))
+    return 0;
+  if(actual > (expected * (100.0 + tolerancePercent) / 100.0))
+    return 0;
+  return 1;
+}
+
+// Check CAN1 only after all test stimuli have been stopped.
+int NmCheckCan1BusSleep(char stepName[])
+{
+  long busload;
+
+  testWaitForTimeout(kBusSleepLoadSettleMs);
+  busload = can1.busload;
+  if(busload > kCan1BusSleepMaxLoadPercent)
+  {
+    testStepFail(stepName,
+                 "CAN1 总线负载率=%d%%，超过休眠阈值=%d%%；不执行下一条测试。",
+                 busload, kCan1BusSleepMaxLoadPercent);
+    return 0;
+  }
+
+  testStepPass(stepName,
+               "CAN1 总线负载率=%d%%，雷达已进入休眠，可执行下一条测试。",
+               busload);
+  return 1;
+}
+
+void NmSendPduFrame()
+{
+  gNmPduTx.dlc = kNmPduExpectedDlc;
+  gNmPduTx.byte(0) = 0x00;
+  gNmPduTx.byte(1) = 0x00;
+  gNmPduTx.byte(2) = 0x00;
+  gNmPduTx.byte(3) = 0x00;
+  gNmPduTx.byte(4) = 0x00;
+  gNmPduTx.byte(5) = 0x00;
+  gNmPduTx.byte(6) = 0x00;
+  gNmPduTx.byte(7) = 0x00;
+
+  // RMR bit injection remains disabled until its released byte and mask are confirmed.
+
+  output(gNmPduTx);
+}
+
+void NmStartPduSimulation(dword cycleMs)
+{
+  if(cycleMs == 0)
+    cycleMs = kNmPduSimulationCycleMs;
+
+  cancelTimer(gNmPduTxTimer);
+  gNmPduSimulationPeriodMs = cycleMs;
+  gNmPduSimulationActive = 1;
+  NmSendPduFrame();
+  setTimer(gNmPduTxTimer, gNmPduSimulationPeriodMs);
+}
+
+void NmStopPduSimulation()
+{
+  gNmPduSimulationActive = 0;
+  cancelTimer(gNmPduTxTimer);
+}
+
+void NmSendTwoPduFrames()
+{
+  NmStopPduSimulation();
+  NmSendPduFrame();
+  testWaitForTimeout(kNmPduSimulationCycleMs);
+  NmSendPduFrame();
+}
+
+void NmSendPowerModeFrame()
+{
+  gPowerModeTx.dlc = 8;
+  gPowerModeTx.FLZCU_9_PowerMode = gPowerModeValue;
+  gPowerModeTx.FLZCU_9_ArmingSts = gPowerModeArmingValue;
+  gPowerModeTx.FLZCU_9_FuelVehPowerMode = gPowerModeFuelValue;
+  output(gPowerModeTx);
+}
+
+void NmStartPowerModeSimulationWithCycle(int powerMode, dword cycleMs)
+{
+  if(cycleMs == 0)
+    cycleMs = kPowerModeSimulationCycleMs;
+
+  cancelTimer(gPowerModeTxTimer);
+  gPowerModeSimulationActive = 1;
+  gPowerModeSimulationPeriodMs = cycleMs;
+  gPowerModeValue = powerMode;
+  gPowerModeArmingValue = 0;
+  gPowerModeFuelValue = 0;
+  NmSendPowerModeFrame();
+  setTimer(gPowerModeTxTimer, gPowerModeSimulationPeriodMs);
+}
+
+void NmStartPowerModeSimulation(int powerMode)
+{
+  NmStartPowerModeSimulationWithCycle(powerMode, kPowerModeSimulationCycleMs);
+}
+
+void NmSetPowerMode(int powerMode)
+{
+  gPowerModeValue = powerMode;
+  if(gPowerModeSimulationActive)
+    NmSendPowerModeFrame();
+}
+
+void NmSetArmingStatus(int armingStatus)
+{
+  gPowerModeArmingValue = armingStatus;
+  if(gPowerModeSimulationActive)
+    NmSendPowerModeFrame();
+}
+
+void NmStopPowerModeSimulation()
+{
+  gPowerModeSimulationActive = 0;
+  cancelTimer(gPowerModeTxTimer);
+}
+
+void NmStopAllStimuli()
+{
+  NmStopPduSimulation();
+  NmStopPowerModeSimulation();
+  gNmPduRmrEnabled = 0;
+}
+
+void NmRestoreSleepStimulus()
+{
+  // Return the DUT from DOW before the independent 0x49D source is stopped.
+  NmStopPduSimulation();
+  NmStartPowerModeSimulation(kPowerModeOff);
+  testWaitForTimeout(kPowerModeOffToArmingDelayMs);
+  NmSetArmingStatus(kPowerModeArmingSuccess);
+  testWaitForTimeout(kArmingStsHoldDurationMs);
+  NmStopPowerModeSimulation();
+}
+void NmSendInvalidWakeupFrame()
+{
+  gInvalidWakeupTx.dlc = 8;
+  gInvalidWakeupTx.byte(0) = 0x00;
+  gInvalidWakeupTx.byte(1) = 0x00;
+  gInvalidWakeupTx.byte(2) = 0x00;
+  gInvalidWakeupTx.byte(3) = 0x00;
+  gInvalidWakeupTx.byte(4) = 0x00;
+  gInvalidWakeupTx.byte(5) = 0x00;
+  gInvalidWakeupTx.byte(6) = 0x00;
+  gInvalidWakeupTx.byte(7) = 0x00;
+  output(gInvalidWakeupTx);
+}
+
+void NmSendTwoInvalidWakeupFrames()
+{
+  NmSendInvalidWakeupFrame();
+  testWaitForTimeout(kInvalidWakeupFrameIntervalMs);
+  NmSendInvalidWakeupFrame();
+}
+
+void NmSendTesterPresentFrame()
+{
+  // ISO-TP single frame: length=2, service=0x3E, sub-function=0x00.
+  gTesterPresentTx.dlc = 8;
+  gTesterPresentTx.byte(0) = 0x02;
+  gTesterPresentTx.byte(1) = 0x3E;
+  gTesterPresentTx.byte(2) = 0x00;
+  gTesterPresentTx.byte(3) = 0x00;
+  gTesterPresentTx.byte(4) = 0x00;
+  gTesterPresentTx.byte(5) = 0x00;
+  gTesterPresentTx.byte(6) = 0x00;
+  gTesterPresentTx.byte(7) = 0x00;
+  output(gTesterPresentTx);
+  testStep("诊断发送", "已在 0x%03X 发送 诊断保持报文（0x3E 00）（0x3E 00）。", kTesterPresentCanId);
+}
+
+void ResetDutObservation()
+{
+  gDutObservationActive = 0;
+  gDutFirstFrameType = kDutFrameNone;
+  gDutNmFrameCount = 0;
+  gDutNmDlcErrorCount = 0;
+  gDutNmCycleCount = 0;
+  gDutApp1FrameCount = 0;
+  gDutApp2FrameCount = 0;
+  gDutFirstFrameTimestamp = 0;
+  gDutFirstNmTimestamp = 0;
+  gDutFirstApp1Timestamp = 0;
+  gDutFirstApp2Timestamp = 0;
+  gDutLastNmTimestamp = 0;
+  gDutLastAppTimestamp = 0;
+  gDutPreviousNmTimestamp = 0;
+  gDutNmMinCycleMs = 0.0;
+  gDutNmMaxCycleMs = 0.0;
+  gDutNmSourceNodeId = -1;
+  gDutRmrValue = -1;
+  gDutNmReserved1 = -1;
+  gDutWakeupPoweron = -1;
+  gDutWakeupNm = -1;
+  gDutWakeupDiag = -1;
+  gDutWakeupDow = -1;
+  gDutAwakePoweron = -1;
+  gDutAwakeNm = -1;
+  gDutAwakeDiag = -1;
+  gDutAwakeDow = -1;
+}
+
+void RecordFirstDutFrame(int frameType, dword timestamp)
+{
+  if(gDutFirstFrameType == kDutFrameNone)
+  {
+    gDutFirstFrameType = frameType;
+    gDutFirstFrameTimestamp = timestamp;
+  }
+}
+
+void StartDutObservation()
+{
+  ResetDutObservation();
+  gDutObservationActive = 1;
+}
+
+void StopDutObservation()
+{
+  gDutObservationActive = 0;
+}
+
+int GetDutOutputCount()
+{
+  return gDutNmFrameCount + gDutApp1FrameCount + gDutApp2FrameCount;
+}
+
+int CheckNoDutOutput(char stepName[], dword observationMs)
+{
+  StartDutObservation();
+  testWaitForTimeout(observationMs);
+  StopDutObservation();
+
+  if(GetDutOutputCount() != 0)
+  {
+    testStepFail(stepName,
+                 "检测到非预期 DUT 报文：NM=%d，RLCR_1=%d，RLCR_2=%d。",
+                 gDutNmFrameCount, gDutApp1FrameCount, gDutApp2FrameCount);
+    return 0;
+  }
+
+  testStepPass(stepName, "在 %d ms 内未观测到 0x63F、0x447 或 0x450。", observationMs);
+  return 1;
+}
+
+int WaitForNoApplicationOutput(char stepName[],
+                               dword timeoutMs,
+                               dword quietWindowMs)
+{
+  dword elapsedMs = 0;
+
+  while(elapsedMs < timeoutMs)
+  {
+    StartDutObservation();
+    testWaitForTimeout(quietWindowMs);
+    StopDutObservation();
+
+    if((gDutApp1FrameCount + gDutApp2FrameCount) == 0)
+    {
+      testStepPass(stepName,
+                   "连续 %d ms 未观测到应用报文：0x447=0，0x450=0。",
+                   quietWindowMs);
+      return 1;
+    }
+
+    elapsedMs += quietWindowMs;
+  }
+
+  testStepFail(stepName,
+               "设防后 %d ms 内应用报文未停止：0x447=%d，0x450=%d。",
+               timeoutMs, gDutApp1FrameCount, gDutApp2FrameCount);
+  return 0;
+}
+
+int CheckFirstDutFrameIsNm(char stepName[])
+{
+  if(gDutFirstFrameType != kDutFrameNm)
+  {
+    testStepFail(stepName, "DUT 首帧类型=%d；期望 NMm_RLCR（0x%03X）。",
+                 gDutFirstFrameType, kDutNmCanId);
+    return 0;
+  }
+
+  testStepPass(stepName, "DUT 首帧为 NMm_RLCR（0x%03X）。", kDutNmCanId);
+  return 1;
+}
+
+int WaitForFirstDutNmFrame(dword timeoutMs)
+{
+  dword elapsedMs = 0;
+
+  while((gDutFirstNmTimestamp == 0) && (elapsedMs < timeoutMs))
+  {
+    testWaitForTimeout(kDutNmPollIntervalMs);
+    elapsedMs += kDutNmPollIntervalMs;
+  }
+
+  return (gDutFirstNmTimestamp != 0);
+}
+
+int CheckDutNmCycle(char stepName[], int minimumFrames)
+{
+  float lowerLimit;
+  float upperLimit;
+
+  lowerLimit = kDutNmCycleMs * (100.0 - kNmCycleTolerancePercent) / 100.0;
+  upperLimit = kDutNmCycleMs * (100.0 + kNmCycleTolerancePercent) / 100.0;
+
+  if(gDutNmFrameCount < minimumFrames)
+  {
+    testStepFail(stepName, "观测到 %d 帧 NM 报文；期望至少 %d 帧。",
+                 gDutNmFrameCount, minimumFrames);
+    return 0;
+  }
+
+  if(gDutNmCycleCount == 0)
+  {
+    testStepFail(stepName, "未采集到 NM 报文周期。");
+    return 0;
+  }
+
+  if((gDutNmMinCycleMs < lowerLimit) || (gDutNmMaxCycleMs > upperLimit))
+  {
+    testStepFail(stepName,
+                 "NM 周期超出范围：最小=%.1f ms，最大=%.1f ms，期望 %.0f..%.0f ms。",
+                 gDutNmMinCycleMs, gDutNmMaxCycleMs, lowerLimit, upperLimit);
+    return 0;
+  }
+
+  testStepPass(stepName,
+               "NM 报文=%d 帧，周期最小=%.1f ms，最大=%.1f ms。",
+               gDutNmFrameCount, gDutNmMinCycleMs, gDutNmMaxCycleMs);
+  return 1;
+}
+
+int CheckDutNmSpan(char stepName[], float expectedSpanMs)
+{
+  float spanMs;
+
+  if((gDutFirstNmTimestamp == 0) || (gDutLastNmTimestamp == 0))
+  {
+    testStepFail(stepName, "未采集到完整 NM 首末帧时间间隔。");
+    return 0;
+  }
+
+  spanMs = NmElapsedMs(gDutFirstNmTimestamp, gDutLastNmTimestamp);
+  if(!NmIsWithinTolerance(spanMs, expectedSpanMs, kNmCycleTolerancePercent))
+  {
+    testStepFail(stepName, "NM 首末帧间隔=%.1f ms；期望 %.0f ms +/- %.0f%%。",
+                 spanMs, expectedSpanMs, kNmCycleTolerancePercent);
+    return 0;
+  }
+
+  testStepPass(stepName, "NM 首帧至末帧间隔=%.1f ms。", spanMs);
+  return 1;
+}
+
+int CheckAppContinuesAfterNm(char stepName[])
+{
+  if((gDutLastNmTimestamp == 0) || (gDutLastAppTimestamp == 0) ||
+     (gDutLastAppTimestamp <= gDutLastNmTimestamp))
+  {
+    testStepFail(stepName,
+                 "NM 停止后应用报文未继续发送。末帧 NM=%u，末帧 APP=%u。",
+                 gDutLastNmTimestamp, gDutLastAppTimestamp);
+    return 0;
+  }
+
+  testStepPass(stepName, "最后一帧 NM 后应用报文仍持续发送。");
+  return 1;
+}
+
+int CheckNmToAppTailByTimestamp(char stepName[],
+                                dword lastNmTimestamp,
+                                dword lastAppTimestamp)
+{
+  float tailMs;
+
+  if((lastNmTimestamp == 0) || (lastAppTimestamp == 0))
+  {
+    testStepFail(stepName, "缺少 0x63F 或应用报文时间戳。");
+    return 0;
+  }
+
+  tailMs = NmElapsedMs(lastNmTimestamp, lastAppTimestamp);
+  if(!NmIsWithinTolerance(tailMs, kRssToPbsmDurationMs, kNmCycleTolerancePercent))
+  {
+    testStepFail(stepName, "最后一帧 0x63F 至最后一帧 0x447/0x450 间隔=%.1f ms；期望 %d ms +/- %.0f%%。",
+                 tailMs, kRssToPbsmDurationMs, kNmCycleTolerancePercent);
+    return 0;
+  }
+
+  testStepPass(stepName, "最后一帧 0x63F 至最后一帧 0x447/0x450 间隔=%.1f ms。", tailMs);
+  return 1;
+}
+
+int CheckNmToAppTail(char stepName[])
+{
+  return CheckNmToAppTailByTimestamp(stepName,
+                                     gDutLastNmTimestamp,
+                                     gDutLastAppTimestamp);
+}
+
+int CheckNmStoppedAppContinues(char stepName[])
+{
+  if(gDutNmFrameCount != 0)
+  {
+    testStepFail(stepName, "NM 仍在发送：观测到 %d 帧 NM 报文。", gDutNmFrameCount);
+    return 0;
+  }
+
+  if((gDutApp1FrameCount + gDutApp2FrameCount) == 0)
+  {
+    testStepFail(stepName, "NM 停止后未观测到应用报文。");
+    return 0;
+  }
+
+  testStepPass(stepName, "NM 已停止；应用报文仍在发送：RLCR_1=%d，RLCR_2=%d。",
+               gDutApp1FrameCount, gDutApp2FrameCount);
+  return 1;
+}
+
+int CheckNmAndAppsPresent(char stepName[])
+{
+  if((gDutNmFrameCount == 0) || (gDutApp1FrameCount == 0) || (gDutApp2FrameCount == 0))
+  {
+    testStepFail(stepName, "DUT 报文缺失：NM=%d，RLCR_1=%d，RLCR_2=%d。",
+                 gDutNmFrameCount, gDutApp1FrameCount, gDutApp2FrameCount);
+    return 0;
+  }
+
+  testStepPass(stepName, "DUT NM 报文及两条应用报文均在发送。");
+  return 1;
+}
+
+int CheckDutNmState(char stepName[],
+                    int wakeupPoweron, int wakeupNm, int wakeupDiag, int wakeupDow,
+                    int awakePoweron, int awakeDiag, int awakeDow)
+{
+  if(gDutNmFrameCount == 0)
+  {
+    testStepFail(stepName, "未采集到 0x%03X（NMm_RLCR），无法校验状态位。", kDutNmCanId);
+    return 0;
+  }
+
+  if((gDutNmDlcErrorCount != 0) ||
+     (gDutNmSourceNodeId != kExpectedDutSourceNodeId) ||
+     (gDutRmrValue != kExpectedDutRmrValue) ||
+     (gDutNmReserved1 != kExpectedDutReserved1Value))
+  {
+    testStepFail(stepName,
+                 "0x63F 基础字段校验失败。\n实际结果：\n  DLC错误帧=%d\n  srcNodeID=0x%02X\n  RMR=%d\n  Reserved1=%d\n期望结果：\n  DLC错误帧=0（DLC=8）\n  srcNodeID=0x%02X\n  RMR=%d\n  Reserved1=%d。",
+                 gDutNmDlcErrorCount, gDutNmSourceNodeId, kExpectedDutSourceNodeId,
+                 gDutRmrValue, kExpectedDutRmrValue,
+                 gDutNmReserved1, kExpectedDutReserved1Value);
+    return 0;
+  }
+
+  if((gDutWakeupPoweron != wakeupPoweron) ||
+     (gDutWakeupNm != wakeupNm) ||
+     (gDutWakeupDiag != wakeupDiag) ||
+     (gDutWakeupDow != wakeupDow) ||
+     (gDutAwakePoweron != awakePoweron) ||
+     (gDutAwakeDiag != awakeDiag) ||
+     (gDutAwakeNm != 0) ||
+     (gDutAwakeDow != awakeDow))
+  {
+    testStepFail(stepName,
+                 "0x63F 状态位校验失败。\n说明：Wakeup=唤醒源；Awake=保持状态。\n实际结果：\n  唤醒源 [ON/0x601(NM)/诊断/DOW] = %d/%d/%d/%d\n  保持状态 [ON/诊断/DOW] = %d/%d/%d\n  Awake_NM = %d\n期望结果：\n  唤醒源 [ON/0x601(NM)/诊断/DOW] = %d/%d/%d/%d\n  保持状态 [ON/诊断/DOW] = %d/%d/%d\n  Awake_NM = 0。",
+                 gDutWakeupPoweron, gDutWakeupNm, gDutWakeupDiag, gDutWakeupDow,
+                 gDutAwakePoweron, gDutAwakeDiag, gDutAwakeDow,
+                 gDutAwakeNm,
+                 wakeupPoweron, wakeupNm, wakeupDiag, wakeupDow,
+                 awakePoweron, awakeDiag, awakeDow);
+    return 0;
+  }
+
+  testStepPass(stepName,
+               "0x63F 字段及状态位校验通过。\n实际结果：\n  DLC=8，srcNodeID=0x%02X，RMR=%d，Reserved1=%d\n  唤醒源 [ON/0x601(NM)/诊断/DOW] = %d/%d/%d/%d\n  保持状态 [ON/诊断/DOW] = %d/%d/%d\n  Awake_NM = %d\n期望结果：\n  DLC=8，srcNodeID=0x%02X，RMR=%d，Reserved1=%d\n  唤醒源 [ON/0x601(NM)/诊断/DOW] = %d/%d/%d/%d\n  保持状态 [ON/诊断/DOW] = %d/%d/%d\n  Awake_NM = 0。",
+               gDutNmSourceNodeId, gDutRmrValue, gDutNmReserved1,
+               gDutWakeupPoweron, gDutWakeupNm, gDutWakeupDiag, gDutWakeupDow,
+               gDutAwakePoweron, gDutAwakeDiag, gDutAwakeDow, gDutAwakeNm,
+               kExpectedDutSourceNodeId, kExpectedDutRmrValue, kExpectedDutReserved1Value,
+               wakeupPoweron, wakeupNm, wakeupDiag, wakeupDow,
+               awakePoweron, awakeDiag, awakeDow);
+  return 1;
+}
+int CheckDutNmHoldDuration(char stepName[], dword eventTimestamp, dword expectedHoldMs)
+{
+  float lastFrameMs;
+
+  if((eventTimestamp == 0) || (gDutLastNmTimestamp == 0))
+  {
+    testStepFail(stepName, "未采集到 0x63F 最后一帧，无法校验保持时长。");
+    return 0;
+  }
+
+  lastFrameMs = NmElapsedMs(eventTimestamp, gDutLastNmTimestamp);
+  if((lastFrameMs < (expectedHoldMs - kDowHoldToleranceMs)) ||
+     (lastFrameMs > (expectedHoldMs + kDowHoldToleranceMs)))
+  {
+    testStepFail(stepName,
+                 "PowerMode ON->OFF 后 0x63F 最后一帧=%.1f ms；期望 %d +/- %d ms。",
+                 lastFrameMs, expectedHoldMs, kDowHoldToleranceMs);
+    return 0;
+  }
+
+  testStepPass(stepName,
+               "PowerMode ON->OFF 后 0x63F 保持=%.1f ms，符合 %d +/- %d ms。",
+               lastFrameMs, expectedHoldMs, kDowHoldToleranceMs);
+  return 1;
+}
+int CheckRmsStimulusTiming(char stepName[], dword wakeupTimestamp, dword stimulusTimestamp)
+{
+  float elapsedMs;
+
+  if((wakeupTimestamp == 0) || (stimulusTimestamp == 0))
+  {
+    testStepFail(stepName, "未采集到 0x601 唤醒或 RMS 触发报文时间戳。");
+    return 0;
+  }
+
+  elapsedMs = NmElapsedMs(wakeupTimestamp, stimulusTimestamp);
+  if(elapsedMs > kRmsStimulusWindowMs)
+  {
+    testStepFail(stepName,
+                 "第一帧 0x601 至 RMS 触发报文间隔=%.1f ms；要求在 %d ms 内发送。",
+                 elapsedMs, kRmsStimulusWindowMs);
+    return 0;
+  }
+
+  testStepPass(stepName,
+               "第一帧 0x601 至 RMS 触发报文间隔=%.1f ms，满足 %d ms RMS 时限。",
+               elapsedMs, kRmsStimulusWindowMs);
+  return 1;
+}
+
+void NmEnterRss()
+{
+  NmStopAllStimuli();
+  NmSendTwoPduFrames();
+  testWaitForTimeout(kRmsDurationMs + 500);
+}
+
+void NmEnterPbsm()
+{
+  NmEnterRss();
+  testWaitForTimeout(kRssToPbsmDurationMs + 600);
+}
+
+on timer gNmPduTxTimer
+{
+  if(!gNmPduSimulationActive)
+    return;
+
+  NmSendPduFrame();
+  setTimer(gNmPduTxTimer, gNmPduSimulationPeriodMs);
+}
+
+on timer gPowerModeTxTimer
+{
+  if(!gPowerModeSimulationActive)
+    return;
+
+  NmSendPowerModeFrame();
+  setTimer(gPowerModeTxTimer, gPowerModeSimulationPeriodMs);
+}
+
+on message NMm_RLCR
+{
+  dword currentTimestamp;
+  float cycleMs;
+
+  if(!gDutObservationActive)
+    return;
+
+  currentTimestamp = timeNow();
+  RecordFirstDutFrame(kDutFrameNm, currentTimestamp);
+  gDutNmFrameCount++;
+  if(this.dlc != kDutNmExpectedDlc)
+    gDutNmDlcErrorCount++;
+
+  if(gDutFirstNmTimestamp == 0)
+    gDutFirstNmTimestamp = currentTimestamp;
+  gDutLastNmTimestamp = currentTimestamp;
+
+  if(gDutPreviousNmTimestamp != 0)
+  {
+    cycleMs = NmElapsedMs(gDutPreviousNmTimestamp, currentTimestamp);
+    gDutNmCycleCount++;
+    if((gDutNmCycleCount == 1) || (cycleMs < gDutNmMinCycleMs))
+      gDutNmMinCycleMs = cycleMs;
+    if((gDutNmCycleCount == 1) || (cycleMs > gDutNmMaxCycleMs))
+      gDutNmMaxCycleMs = cycleMs;
+  }
+  gDutPreviousNmTimestamp = currentTimestamp;
+
+  gDutNmSourceNodeId = this.srcNodeID_RLCR;
+  gDutRmrValue = this.RMR_RLCR;
+  gDutNmReserved1 = this.NMm_RLCR_Reserved1;
+  gDutWakeupPoweron = this.RLCR_Wakeup_Poweron;
+  gDutWakeupNm = this.RLCR_Wakeup_NM;
+  gDutWakeupDiag = this.RLCR_Wakeup_Diag;
+  gDutWakeupDow = this.RLCR_Wakeup_DOW;
+  gDutAwakePoweron = this.RLCR_Awake_Poweron;
+  gDutAwakeNm = this.RLCR_Awake_NM;
+  gDutAwakeDiag = this.RLCR_Awake_Diag;
+  gDutAwakeDow = this.RLCR_Awake_DOW;
+}
+
+on message RLCR_1
+{
+  dword currentTimestamp;
+
+  if(!gDutObservationActive)
+    return;
+
+  currentTimestamp = timeNow();
+  RecordFirstDutFrame(kDutFrameApp1, currentTimestamp);
+  gDutApp1FrameCount++;
+  if(gDutFirstApp1Timestamp == 0)
+    gDutFirstApp1Timestamp = currentTimestamp;
+  gDutLastAppTimestamp = currentTimestamp;
+}
+
+on message RLCR_2
+{
+  dword currentTimestamp;
+
+  if(!gDutObservationActive)
+    return;
+
+  currentTimestamp = timeNow();
+  RecordFirstDutFrame(kDutFrameApp2, currentTimestamp);
+  gDutApp2FrameCount++;
+  if(gDutFirstApp2Timestamp == 0)
+    gDutFirstApp2Timestamp = currentTimestamp;
+  gDutLastAppTimestamp = currentTimestamp;
+}
+
+testcase Nm_AutomaticSession_Start()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("NM_SESSION_START", "初始化HTML报告和日志");
+  testModuleTitle("NM 网络管理测试报告");
+  NmStopAllStimuli();
+  testStepPass("初始化",
+               "0x601 由 NM_Test.can 独立仿真；0x49D 仅在 PowerMode、DOW 或设防清理用例中发送。测试前请关闭其他节点的同报文源。");
+  StopToLogging();
+}
+
+
+testcase NM_TC01_BsmDiagnosticNoWake()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC1-1", "BSM下诊断不唤醒");
+  NmStopAllStimuli();
+  testStepWarning("BSM 前置条件",
+                  "执行前请确认雷达已进入 BSM；本用例仅验证诊断报文不产生唤醒。");
+
+  testStep("BSM 诊断唤醒抑制", "发送一次 0x3E 00 后独立观察 %d ms。", kBsmNoWakeObservationMs);
+  StartDutObservation();
+  NmSendTesterPresentFrame();
+  testWaitForTimeout(kBsmNoWakeObservationMs);
+  StopDutObservation();
+  if(GetDutOutputCount() != 0)
+    testStepFail("BSM 诊断唤醒抑制",
+                 "BSM 下 0x3E 00 意外唤醒了 DUT。");
+  else
+    testStepPass("BSM 诊断唤醒抑制",
+                 "BSM 下发送 0x3E 00 后 %d ms 内未检测到 DUT 报文输出。",
+                 kBsmNoWakeObservationMs);
+
+  if(!NmCheckCan1BusSleep("TC1-1 结束休眠确认"))
+    StopToLogging();
+    return;
+  StopToLogging();
+}
+
+testcase NM_TC01_BsmPowerModeNoWake()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC1-2", "BSM下PowerMode ON不唤醒");
+  NmStopAllStimuli();
+  if(!NmCheckCan1BusSleep("TC1-2 开始休眠确认"))
+    StopToLogging();
+    return;
+  testStepWarning("BSM 前置条件",
+                  "执行前请确认雷达已进入 BSM；本用例仅验证 PowerMode=ON 不产生唤醒。");
+
+  testStep("BSM PowerMode唤醒抑制", "发送 PowerMode=ON 后独立观察 %d ms。", kBsmNoWakeObservationMs);
+  StartDutObservation();
+  NmStartPowerModeSimulation(kPowerModeOn);
+  testWaitForTimeout(kBsmNoWakeObservationMs);
+  StopDutObservation();
+  NmStopPowerModeSimulation();
+  if(GetDutOutputCount() != 0)
+    testStepFail("BSM PowerMode唤醒抑制",
+                 "BSM 下 PowerMode=ON 意外唤醒了 DUT。");
+  else
+    testStepPass("BSM PowerMode唤醒抑制",
+                 "BSM 下发送 PowerMode=ON 后 %d ms 内未检测到 DUT 报文输出。",
+                 kBsmNoWakeObservationMs);
+
+  NmRestoreSleepStimulus();
+  StopToLogging();
+}
+
+testcase NM_TC02_PbsmToRmsByNm()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC2", "PBSM到RMS: 两帧0x601唤醒");
+  NmEnterPbsm();
+  StartDutObservation();
+  NmSendTwoPduFrames();
+  testWaitForTimeout(kRmsDurationMs + kRssToPbsmDurationMs + 600);
+  StopDutObservation();
+  CheckFirstDutFrameIsNm("首帧响应");
+  CheckDutNmCycle("RMS NM 周期", 4);
+  CheckDutNmSpan("RMS NM 首末帧间隔", kRmsDurationMs);
+  CheckDutNmState("RMS NM 0x63F 状态位", 0, 1, 0, 0, 0, 0, 0);
+  CheckNmToAppTail("NM 至应用报文尾部间隔");
+  StopToLogging();
+}
+
+testcase NM_TC03_RmsToNosByDiag()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  dword nmWakeupTimestamp;
+  dword diagnosticTimestamp;
+
+  testCaseTitle("T1V-C-NM-TC3", "RMS到NOS: 诊断保持");
+  NmEnterPbsm();
+  StartDutObservation();
+  nmWakeupTimestamp = timeNow();
+  NmSendTwoPduFrames();
+  testWaitForTimeout(kRmsStimulusDelayMs);
+  diagnosticTimestamp = timeNow();
+  NmSendTesterPresentFrame();
+  CheckRmsStimulusTiming("诊断报文 RMS 时限", nmWakeupTimestamp, diagnosticTimestamp);
+  testWaitForTimeout(6500);
+  StopDutObservation();
+  CheckNmAndAppsPresent("NOS 报文输出");
+  CheckDutNmCycle("NOS NM 周期", 7);
+  CheckDutNmSpan("NOS NM 首末帧间隔", 6000.0);
+  CheckDutNmState("诊断 NOS 0x63F 状态位", 0, 1, 0, 0, 0, 1, 0);
+  StopToLogging();
+}
+
+testcase NM_TC04_RmsToNosByPowerMode()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  dword nmWakeupTimestamp;
+  dword powerModeOnTimestamp;
+
+  testCaseTitle("T1V-C-NM-TC4", "RMS到NOS: PowerMode保持");
+  NmEnterPbsm();
+  NmStartPowerModeSimulation(kPowerModeOff);
+  StartDutObservation();
+  nmWakeupTimestamp = timeNow();
+  NmSendTwoPduFrames();
+  testWaitForTimeout(kRmsStimulusDelayMs);
+  powerModeOnTimestamp = timeNow();
+  NmSetPowerMode(kPowerModeOn);
+  CheckRmsStimulusTiming("PowerMode ON RMS 时限", nmWakeupTimestamp, powerModeOnTimestamp);
+  testWaitForTimeout(6500);
+  StopDutObservation();
+  CheckNmAndAppsPresent("NOS 报文输出");
+  CheckDutNmCycle("PowerMode NM 周期", 7);
+  CheckDutNmState("PowerMode NOS 0x63F 状态位", 0, 1, 0, 0, 1, 0, 0);
+  NmRestoreSleepStimulus();
+  StopToLogging();
+}
+
+testcase NM_TC05_RmsToRss()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC5", "RMS到RSS");
+  NmEnterPbsm();
+  StartDutObservation();
+  NmSendTwoPduFrames();
+  testWaitForTimeout(kRmsDurationMs + 1000);
+  StopDutObservation();
+  CheckDutNmCycle("RMS NM 周期", 4);
+  CheckDutNmSpan("RMS NM 首末帧间隔", kRmsDurationMs);
+  CheckDutNmState("RMS NM 0x63F 状态位", 0, 1, 0, 0, 0, 0, 0);
+  CheckAppContinuesAfterNm("RSS 应用报文输出");
+  StopToLogging();
+}
+
+testcase NM_TC06_NosToRssByDow()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  dword powerModeOffTimestamp;
+
+  testCaseTitle("T1V-C-NM-TC6", "NOS到RSS: DOW 210秒保持");
+  NmEnterPbsm();
+  NmStartPowerModeSimulation(kPowerModeOn);
+  NmStartPduSimulation(kNmPduSimulationCycleMs);
+  testWaitForTimeout(300);
+
+  StartDutObservation();
+  powerModeOffTimestamp = timeNow();
+  NmSetPowerMode(kPowerModeOff);
+  testWaitForTimeout(kNmStateObservationMs);
+  StopDutObservation();
+  CheckDutNmState("DOW RMS 0x63F 状态位", 0, 1, 0, 0, 0, 0, 1);
+
+  StartDutObservation();
+  testWaitForTimeout(kRmsDurationMs + 300);
+  StopDutObservation();
+  CheckDutNmState("DOW NOS 0x63F 状态位", 0, 1, 0, 0, 0, 0, 1);
+
+  StartDutObservation();
+  testStep("DOW 保持", "PowerMode ON->OFF 后观测 0x63F 保持 %d ms。", kDowHoldDurationMs);
+  testWaitForTimeout(kDowHoldDurationMs - kRmsDurationMs - 300 + kDowHoldToleranceMs);
+  StopDutObservation();
+  CheckDutNmCycle("DOW 保持 NM 周期", 200);
+  CheckDutNmState("DOW 保持阶段 0x63F 状态位", 0, 1, 0, 0, 0, 0, 1);
+  CheckDutNmHoldDuration("DOW 0x63F 保持时长", powerModeOffTimestamp, kDowHoldDurationMs);
+
+  NmStopPduSimulation();
+  StartDutObservation();
+  testWaitForTimeout(kDutNmCycleMs + 200);
+  StopDutObservation();
+  CheckNmStoppedAppContinues("DOW RSS 结果");
+  StopToLogging();
+}
+testcase NM_TC07_RmsTimeoutDiagHold()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  dword nmStartTimestamp;
+  float firstNmElapsedMs;
+
+  testCaseTitle("T1V-C-NM-TC7-1", "RMS超时后诊断保持");
+  NmEnterPbsm();
+
+  StartDutObservation();
+  testStep("NM 唤醒发送",
+           "周期发送 0x601（周期 %d ms）唤醒雷达；检测到首帧 0x63F 后立即停止。",
+           kTc7NmPduSimulationCycleMs);
+  nmStartTimestamp = timeNow();
+  NmStartPduSimulation(kTc7NmPduSimulationCycleMs);
+  if(!WaitForFirstDutNmFrame(kWakeupAllFramesLimitMs))
+  {
+    NmStopPduSimulation();
+    StopDutObservation();
+    testStepFail("RMS 进入",
+                 "周期发送 0x601 后 %d ms 内未检测到 0x63F。",
+                 kWakeupAllFramesLimitMs);
+    StopToLogging();
+    return;
+  }
+
+  NmStopPduSimulation();
+  firstNmElapsedMs = NmElapsedMs(nmStartTimestamp, gDutFirstNmTimestamp);
+  testStepPass("停止 0x601",
+               "检测到首帧 0x63F，响应时间=%.1f ms；0x601 仅作为唤醒源，现已停止。",
+               firstNmElapsedMs);
+
+  testStep("RMS 阶段",
+           "停止 0x601 后观察 RMS %d ms，确认 0x63F 持续发送。",
+           kRmsDurationMs);
+  testWaitForTimeout(kRmsDurationMs);
+  StopDutObservation();
+  CheckFirstDutFrameIsNm("RMS 首帧响应");
+  CheckDutNmCycle("RMS NM 周期", 4);
+  CheckDutNmSpan("RMS 0x63F 持续时长", kRmsDurationMs);
+  CheckDutNmState("RMS 0x63F 标志位", 0, 1, 0, 0, 0, 0, 0);
+
+  StartDutObservation();
+  testStep("RMS 超时 RSS",
+           "RMS 超时后观察 %d ms；不应发送 0x63F，0x447/0x450 应继续发送。",
+           kNmStateObservationMs);
+  testWaitForTimeout(kNmStateObservationMs);
+  StopDutObservation();
+  CheckNmStoppedAppContinues("RMS 超时后报文输出");
+
+  StartDutObservation();
+  testStep("诊断保持",
+           "RSS 状态发送 0x3E 00，诊断保持 %d ms；延长 %d ms 采集第 7 帧 0x63F。",
+           kDiagnosticHoldDurationMs, kDiagnosticHoldCaptureMarginMs);
+  NmSendTesterPresentFrame();
+  testWaitForTimeout(kDiagnosticHoldDurationMs + kDiagnosticHoldCaptureMarginMs);
+  StopDutObservation();
+  CheckNmAndAppsPresent("诊断保持报文输出");
+  CheckDutNmCycle("诊断保持 NM 周期", 7);
+  CheckDutNmState("诊断保持 0x63F 标志位", 0, 0, 0, 0, 0, 1, 0);
+
+  StartDutObservation();
+  testStep("诊断超时 RSS",
+           "诊断保持超时后观察 %d ms；不应发送 0x63F，0x447/0x450 应继续发送。",
+           kNmStateObservationMs);
+  testWaitForTimeout(kNmStateObservationMs);
+  StopDutObservation();
+  CheckNmStoppedAppContinues("诊断超时后报文输出");
+  StopToLogging();
+}
+
+testcase NM_TC07_RmsTimeoutPowerModeHold()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  dword nmStartTimestamp;
+  float firstNmElapsedMs;
+
+  testCaseTitle("T1V-C-NM-TC7-2", "RMS超时后ON保持");
+  NmEnterPbsm();
+
+  StartDutObservation();
+  testStep("NM 唤醒发送",
+           "周期发送 0x601（周期 %d ms）唤醒雷达；检测到首帧 0x63F 后立即停止。",
+           kTc7NmPduSimulationCycleMs);
+  nmStartTimestamp = timeNow();
+  NmStartPduSimulation(kTc7NmPduSimulationCycleMs);
+  if(!WaitForFirstDutNmFrame(kWakeupAllFramesLimitMs))
+  {
+    NmStopPduSimulation();
+    StopDutObservation();
+    testStepFail("RMS 进入",
+                 "周期发送 0x601 后 %d ms 内未检测到 0x63F。",
+                 kWakeupAllFramesLimitMs);
+    StopToLogging();
+    return;
+  }
+
+  NmStopPduSimulation();
+  firstNmElapsedMs = NmElapsedMs(nmStartTimestamp, gDutFirstNmTimestamp);
+  testStepPass("停止 0x601",
+               "检测到首帧 0x63F，响应时间=%.1f ms；0x601 仅作为唤醒源，现已停止。",
+               firstNmElapsedMs);
+
+  testStep("RMS 阶段",
+           "停止 0x601 后观察 RMS %d ms，确认 0x63F 持续发送。",
+           kRmsDurationMs);
+  testWaitForTimeout(kRmsDurationMs);
+  StopDutObservation();
+  CheckFirstDutFrameIsNm("RMS 首帧响应");
+  CheckDutNmCycle("RMS NM 周期", 4);
+  CheckDutNmSpan("RMS 0x63F 持续时长", kRmsDurationMs);
+  CheckDutNmState("RMS 0x63F 标志位", 0, 1, 0, 0, 0, 0, 0);
+
+  StartDutObservation();
+  testStep("RMS 超时 RSS",
+           "RMS 超时后观察 %d ms；不应发送 0x63F，0x447/0x450 应继续发送。",
+           kNmStateObservationMs);
+  testWaitForTimeout(kNmStateObservationMs);
+  StopDutObservation();
+  CheckNmStoppedAppContinues("RMS 超时后报文输出");
+
+  StartDutObservation();
+  testStep("ON 保持",
+           "RSS 状态发送 PowerMode=ON，连续观察 %d ms 并校验 0x63F 标志位。",
+           kPowerModeOnHoldDurationMs);
+  NmStartPowerModeSimulation(kPowerModeOn);
+  testWaitForTimeout(kPowerModeOnHoldDurationMs);
+  StopDutObservation();
+  CheckNmAndAppsPresent("ON 保持报文输出");
+  CheckDutNmCycle("ON 保持 NM 周期", 8);
+  CheckDutNmState("ON 保持 0x63F 标志位", 0, 0, 0, 0, 1, 0, 0);
+  NmRestoreSleepStimulus();
+  StopToLogging();
+}
+
+testcase NM_TC08_RssToNosByPowerMode()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC8", "RSS到NOS: PowerMode保持");
+  NmEnterRss();
+  StartDutObservation();
+  NmStartPowerModeSimulation(kPowerModeOn);
+  testWaitForTimeout(kPowerModeHoldObservationMs);
+  StopDutObservation();
+  CheckNmAndAppsPresent("PowerMode 保持报文输出");
+  CheckDutNmCycle("PowerMode 保持 NM 周期", 2);
+  CheckDutNmState("PowerMode NOS 0x63F 状态位", 0, 1, 0, 0, 1, 0, 0);
+
+  testStep("TC8到TC9设防",
+           "发送 PowerMode=OFF 和设防信号，停止 0x49D 后检测应用报文静默。");
+  NmRestoreSleepStimulus();
+  if(!WaitForNoApplicationOutput("TC8到TC9应用报文静默",
+                                 kApplicationSilenceTimeoutMs,
+                                 kApplicationSilenceWindowMs))
+  {
+    StopToLogging();
+    return;
+  }
+
+  testStep("TC8到TC9等待",
+           "应用报文静默后等待 %d ms，再执行 TC9。",
+           kTc8ToTc9DelayMs);
+  testWaitForTimeout(kTc8ToTc9DelayMs);
+  StopToLogging();
+}
+
+testcase NM_TC09_RssToPbsm()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  dword nmStartTimestamp;
+  dword rmsLastNmTimestamp;
+  dword rssLastAppTimestamp;
+  float firstNmElapsedMs;
+
+  testCaseTitle("T1V-C-NM-TC9", "RSS到PBSM: 0x601触发后自然休眠");
+  NmStopAllStimuli();
+  testStepPass("发送源预置",
+               "已停止本脚本控制的全部发送源；本用例不发送 0x49D。");
+
+  StartDutObservation();
+  testStep("NM 周期发送",
+           "周期发送 0x601（周期 %d ms），检测到雷达进入 RMS 后立即停止发送。",
+           kNmPduSimulationCycleMs);
+  nmStartTimestamp = timeNow();
+  NmStartPduSimulation(kNmPduSimulationCycleMs);
+  if(!WaitForFirstDutNmFrame(kWakeupAllFramesLimitMs))
+  {
+    NmStopPduSimulation();
+    StopDutObservation();
+    testStepFail("RMS 进入", "周期发送 0x601 后 %d ms 内未检测到 0x63F。",
+                 kWakeupAllFramesLimitMs);
+    StopToLogging();
+    return;
+  }
+
+  NmStopPduSimulation();
+  firstNmElapsedMs = NmElapsedMs(nmStartTimestamp, gDutFirstNmTimestamp);
+  testStepPass("停止 0x601",
+               "检测到首帧 0x63F，响应时间=%.1f ms；已停止周期发送 0x601。",
+               firstNmElapsedMs);
+
+  testStep("RMS 阶段",
+           "停止 0x601 后观察约 %d ms；0x63F 应持续发送。",
+           kRmsDurationMs);
+  testWaitForTimeout(kRmsDurationMs);
+  StopDutObservation();
+  CheckFirstDutFrameIsNm("RMS 首帧响应");
+  CheckDutNmCycle("RMS NM 周期", 4);
+  CheckDutNmSpan("RMS 0x63F 持续时长", kRmsDurationMs);
+  CheckDutNmState("RMS NM 0x63F 状态位", 0, 1, 0, 0, 0, 0, 0);
+  rmsLastNmTimestamp = gDutLastNmTimestamp;
+
+  StartDutObservation();
+  testStep("RSS 阶段",
+           "RMS 超时后观察约 %d ms；0x63F 应停止，0x447/0x450 应继续发送。",
+           kRssToPbsmDurationMs);
+  testWaitForTimeout(kRssToPbsmDurationMs);
+  StopDutObservation();
+  CheckNmStoppedAppContinues("RSS 报文输出");
+  rssLastAppTimestamp = gDutLastAppTimestamp;
+  CheckNmToAppTailByTimestamp("RSS 到 PBSM 时序",
+                              rmsLastNmTimestamp,
+                              rssLastAppTimestamp);
+
+  CheckNoDutOutput("PBSM 状态确认", 600);
+  StopToLogging();
+}
+
+testcase NM_TC10_PbsmToBusSleep()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC10", "PBSM到总线休眠错误帧时序");
+  NmEnterPbsm();
+  CheckNoDutOutput("PBSM 状态确认", 600);
+  testStepWarning("需要人工硬件操作",
+                  "请配置 VH6501 或等效设备，发送规定的应用报文，并测量最后一帧 APP 至第一帧错误帧间隔：1500 ms +/- 10%。");
+  StopToLogging();
+}
+
+testcase NM_TC11_PbsmToRmsByNm()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC11", "PBSM到RMS: 两帧0x601唤醒");
+  NmEnterPbsm();
+  StartDutObservation();
+  NmSendTwoPduFrames();
+  testWaitForTimeout(kRmsDurationMs + 500);
+  StopDutObservation();
+  CheckFirstDutFrameIsNm("首帧响应");
+  CheckDutNmCycle("PBSM 唤醒 NM 周期", 4);
+  CheckDutNmSpan("PBSM 唤醒 NM 首末帧间隔", kRmsDurationMs);
+  CheckDutNmState("PBSM 唤醒 RMS 0x63F 状态位", 0, 1, 0, 0, 0, 0, 0);
+  StopToLogging();
+}
+
+testcase NM_TC12_PbsmDiagAndPowerModeNoWake()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC12", "PBSM下诊断和PowerMode ON不唤醒");
+  NmEnterPbsm();
+  testStep("PBSM 唤醒抑制", "依次发送诊断保持报文和 PowerMode=ON。");
+
+  StartDutObservation();
+  NmSendTesterPresentFrame();
+  testWaitForTimeout(kInvalidWakeupObservationMs);
+  NmStartPowerModeSimulation(kPowerModeOn);
+  testWaitForTimeout(kInvalidWakeupObservationMs);
+  StopDutObservation();
+
+  if(GetDutOutputCount() != 0)
+    testStepFail("PBSM 唤醒抑制",
+                 "PBSM 下诊断或 PowerMode ON 意外唤醒了 DUT。");
+  else
+    testStepPass("PBSM 唤醒抑制",
+                 "PBSM 下发送诊断保持报文和 PowerMode=ON 后，未检测到 DUT 报文输出。");
+
+  NmRestoreSleepStimulus();
+  StopToLogging();
+}
+
+testcase NM_TC13_NmPduAttributes()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC13", "NM报文DLC和源节点ID");
+  NmEnterPbsm();
+  StartDutObservation();
+  NmStartPduSimulation(kNmPduSimulationCycleMs);
+  testWaitForTimeout(2500);
+  NmStopPduSimulation();
+  StopDutObservation();
+  CheckDutNmState("NM 报文属性", 0, 1, 0, 0, 0, 0, 0);
+  StopToLogging();
+}
+testcase NM_TC14_NetworkWakeupResponse()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  float firstFrameMs;
+  dword wakeupTimestamp;
+
+  testCaseTitle("T1V-C-NM-TC14", "网络唤醒响应时间");
+  NmEnterPbsm();
+  StartDutObservation();
+  wakeupTimestamp = timeNow();
+  NmStartPduSimulation(kNmPduSimulationCycleMs);
+  testWaitForTimeout(kWakeupAllFramesLimitMs + 100);
+  NmStopPduSimulation();
+  StopDutObservation();
+
+  if(gDutFirstFrameTimestamp == 0)
+  {
+    testStepFail("唤醒首帧", "NM 唤醒后未观测到 DUT 报文。");
+    StopToLogging();
+    return;
+  }
+
+  firstFrameMs = NmElapsedMs(wakeupTimestamp, gDutFirstFrameTimestamp);
+  if(firstFrameMs > kWakeupFirstFrameLimitMs)
+    testStepFail("唤醒首帧", "DUT 首帧响应=%.1f ms；限制=%d ms。",
+                 firstFrameMs, kWakeupFirstFrameLimitMs);
+  else
+    testStepPass("唤醒首帧", "DUT 首帧响应=%.1f ms。", firstFrameMs);
+
+  CheckNmAndAppsPresent("唤醒后的全部周期报文");
+  CheckDutNmState("网络唤醒 RMS 0x63F 状态位", 0, 1, 0, 0, 0, 0, 0);
+  if((gDutFirstNmTimestamp == 0) ||
+     (gDutFirstApp1Timestamp == 0) ||
+     (gDutFirstApp2Timestamp == 0) ||
+     (NmElapsedMs(wakeupTimestamp, gDutFirstNmTimestamp) > kWakeupAllFramesLimitMs) ||
+     (NmElapsedMs(wakeupTimestamp, gDutFirstApp1Timestamp) > kWakeupAllFramesLimitMs) ||
+     (NmElapsedMs(wakeupTimestamp, gDutFirstApp2Timestamp) > kWakeupAllFramesLimitMs))
+  {
+    testStepFail("唤醒报文时限",
+                 "NMm_RLCR、RLCR_1 和 RLCR_2 均须在 %d ms 内出现。",
+                 kWakeupAllFramesLimitMs);
+  }
+  else
+  {
+    testStepPass("唤醒报文时限",
+                 "NMm_RLCR、RLCR_1 和 RLCR_2 均已在 %d ms 内出现。",
+                 kWakeupAllFramesLimitMs);
+  }
+  StopToLogging();
+}
+
+testcase NM_TC15_InvalidWakeupRejected()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC15", "无效0x123唤醒拒绝");
+  NmEnterPbsm();
+  StartDutObservation();
+  NmSendTwoInvalidWakeupFrames();
+  testWaitForTimeout(kInvalidWakeupObservationMs);
+  StopDutObservation();
+  if(GetDutOutputCount() != 0)
+    testStepFail("无效唤醒拒绝", "0x%03X 报文唤醒了 DUT。", kInvalidWakeupCanId);
+  else
+    testStepPass("无效唤醒拒绝", "发送两帧 0x%03X 后未检测到 DUT 报文输出。", kInvalidWakeupCanId);
+  StopToLogging();
+}
+
+testcase NM_TC16_ValidWakeupAfterInvalid()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC16", "无效事件后有效NM唤醒");
+  NmEnterPbsm();
+  StartDutObservation();
+  NmSendTwoInvalidWakeupFrames();
+  testWaitForTimeout(kInvalidWakeupObservationMs);
+  StopDutObservation();
+  if(GetDutOutputCount() != 0)
+    testStepFail("无效唤醒阶段", "有效 NM 唤醒前已出现 DUT 报文输出。");
+  else
+    testStepPass("无效唤醒阶段", "无效报文后 DUT 保持休眠。");
+
+  StartDutObservation();
+  NmSendPduFrame();
+  testWaitForTimeout(kRmsDurationMs + 500);
+  StopDutObservation();
+  CheckFirstDutFrameIsNm("有效唤醒首帧响应");
+  CheckDutNmCycle("有效唤醒 RMS NM 周期", 4);
+  CheckDutNmState("有效唤醒 RMS 0x63F 状态位", 0, 1, 0, 0, 0, 0, 0);
+  StopToLogging();
+}
+
+testcase NM_TC17_DiagnosticNetworkKeepAlive()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  dword nmWakeupTimestamp;
+  dword diagnosticTimestamp;
+
+  testCaseTitle("T1V-C-NM-TC17", "诊断网络保持");
+  NmEnterPbsm();
+  StartDutObservation();
+  nmWakeupTimestamp = timeNow();
+  NmSendTwoPduFrames();
+  testWaitForTimeout(kRmsStimulusDelayMs);
+  diagnosticTimestamp = timeNow();
+  NmSendTesterPresentFrame();
+  CheckRmsStimulusTiming("诊断保持 RMS 时限", nmWakeupTimestamp, diagnosticTimestamp);
+  testWaitForTimeout(4000);
+  StopDutObservation();
+  CheckNmAndAppsPresent("诊断网络保持报文输出");
+  CheckDutNmCycle("诊断网络保持 NM 周期", 4);
+  CheckDutNmState("诊断保持 NOS 0x63F 状态位", 0, 1, 0, 0, 0, 1, 0);
+  StopToLogging();
+}
+
+testcase NM_TC18_PowerModeNetworkKeepAlive()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  dword nmWakeupTimestamp;
+  dword powerModeOnTimestamp;
+
+  testCaseTitle("T1V-C-NM-TC18", "PowerMode ON网络保持");
+  NmEnterPbsm();
+  NmStartPowerModeSimulationWithCycle(kPowerModeOff, kPowerModeKeepAliveCycleMs);
+  StartDutObservation();
+  nmWakeupTimestamp = timeNow();
+  NmSendTwoPduFrames();
+  testWaitForTimeout(kRmsStimulusDelayMs);
+  powerModeOnTimestamp = timeNow();
+  NmSetPowerMode(kPowerModeOn);
+  CheckRmsStimulusTiming("PowerMode ON 保持 RMS 时限", nmWakeupTimestamp, powerModeOnTimestamp);
+  testWaitForTimeout(4000);
+  StopDutObservation();
+  CheckNmAndAppsPresent("PowerMode 网络保持报文输出");
+  CheckDutNmCycle("PowerMode 网络保持 NM 周期", 4);
+  CheckDutNmState("PowerMode 保持 NOS 0x63F 状态位", 0, 1, 0, 0, 1, 0, 0);
+  NmRestoreSleepStimulus();
+  StopToLogging();
+}
+
+testcase NM_TC19_Dow210SecondHold()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  dword powerModeOffTimestamp;
+
+  testCaseTitle("T1V-C-NM-TC19", "DOW 210秒保持后进入总线休眠");
+  NmEnterPbsm();
+  NmStartPowerModeSimulation(kPowerModeOn);
+  NmStartPduSimulation(kNmPduSimulationCycleMs);
+  testWaitForTimeout(300);
+
+  StartDutObservation();
+  powerModeOffTimestamp = timeNow();
+  NmSetPowerMode(kPowerModeOff);
+  testWaitForTimeout(kNmStateObservationMs);
+  StopDutObservation();
+  CheckDutNmState("DOW RMS 0x63F 状态位", 0, 1, 0, 0, 0, 0, 1);
+
+  StartDutObservation();
+  testWaitForTimeout(kRmsDurationMs + 300);
+  StopDutObservation();
+  CheckDutNmState("DOW NOS 0x63F 状态位", 0, 1, 0, 0, 0, 0, 1);
+
+  StartDutObservation();
+  testStep("DOW 保持", "PowerMode ON->OFF 后观测 0x63F 保持 %d ms。", kDowHoldDurationMs);
+  testWaitForTimeout(kDowHoldDurationMs - kRmsDurationMs - 300 + kDowHoldToleranceMs);
+  StopDutObservation();
+  CheckDutNmCycle("DOW 保持 NM 周期", 200);
+  CheckDutNmState("DOW 保持阶段 0x63F 状态位", 0, 1, 0, 0, 0, 0, 1);
+  CheckDutNmHoldDuration("DOW 0x63F 保持时长", powerModeOffTimestamp, kDowHoldDurationMs);
+
+  NmStopPduSimulation();
+  testWaitForTimeout(kRssToPbsmDurationMs + 300);
+  CheckNoDutOutput("DOW 后总线休眠结果", 800);
+  StopToLogging();
+}
+testcase NM_TC20_NmUserData()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC20", "0x63F用户数据状态位");
+  NmEnterPbsm();
+  NmStartPowerModeSimulation(kPowerModeOff);
+
+  StartDutObservation();
+  NmSendTwoPduFrames();
+  testWaitForTimeout(800);
+  StopDutObservation();
+  CheckDutNmState("RMS 用户数据", 0, 1, 0, 0, 0, 0, 0);
+
+  StartDutObservation();
+  NmSendTesterPresentFrame();
+  testWaitForTimeout(800);
+  StopDutObservation();
+  CheckDutNmState("NOS 诊断用户数据", 0, 1, 0, 0, 0, 1, 0);
+
+  StartDutObservation();
+  NmSetPowerMode(kPowerModeOn);
+  testWaitForTimeout(800);
+  StopDutObservation();
+  CheckDutNmState("PowerMode RMS 用户数据", 0, 1, 0, 0, 1, 0, 0);
+
+  StartDutObservation();
+  testWaitForTimeout(kRmsDurationMs + 300);
+  StopDutObservation();
+  CheckDutNmState("PowerMode NOS 用户数据", 0, 1, 0, 0, 1, 0, 0);
+
+  StartDutObservation();
+  NmSetPowerMode(kPowerModeOff);
+  testWaitForTimeout(800);
+  StopDutObservation();
+  CheckDutNmState("DOW RMS 用户数据", 0, 1, 0, 0, 0, 0, 1);
+
+  StartDutObservation();
+  testWaitForTimeout(kRmsDurationMs + 300);
+  StopDutObservation();
+  CheckDutNmState("DOW NOS 用户数据", 0, 1, 0, 0, 0, 0, 1);
+  NmRestoreSleepStimulus();
+  StopToLogging();
+}
+
+testcase NM_TC21_RssOtherEcuTraffic()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC21", "RSS下其他ECU报文");
+  NmEnterRss();
+  StartDutObservation();
+  testWaitForTimeout(600);
+  StopDutObservation();
+  CheckNmStoppedAppContinues("RSS 前置条件");
+  testStepWarning("需要人工配置",
+                  "请配置已发布的外部 0x6xx 报文 ID 和数据，再验证规定的 RSS/RMS 行为。");
+  StopToLogging();
+}
+
+testcase NM_TC22_NosOtherEcuTraffic()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC22", "NOS下0x601报文");
+  NmEnterPbsm();
+  NmSendTwoPduFrames();
+  testWaitForTimeout(300);
+  NmSendTesterPresentFrame();
+  testWaitForTimeout(2500);
+
+  StartDutObservation();
+  NmSendPduFrame();
+  testWaitForTimeout(2500);
+  StopDutObservation();
+  CheckNmAndAppsPresent("NOS 保持报文输出");
+  CheckDutNmCycle("NOS 保持 NM 周期", 2);
+  CheckDutNmState("NOS 保持 0x63F 状态位", 0, 1, 0, 0, 0, 1, 0);
+  StopToLogging();
+}
+
+testcase NM_TC23_RmrHandling()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("T1V-C-NM-TC23", "RMR=1处理");
+
+  if((kNmPduRmrByteIndex < 0) || (kNmPduRmrMask == 0))
+  {
+    testStepWarning("需要人工配置",
+                    "执行 TC23 前，请依据已发布的 NM_PDU 定义配置 kNmPduRmrByteIndex 和 kNmPduRmrMask。");
+    StopToLogging();
+    return;
+  }
+
+  NmEnterPbsm();
+  gNmPduRmrEnabled = 1;
+  StartDutObservation();
+  NmSendTwoPduFrames();
+  testWaitForTimeout(kRmsDurationMs + 500);
+  StopDutObservation();
+  gNmPduRmrEnabled = 0;
+
+  if(GetDutOutputCount() != 0)
+    testStepFail("RMR 处理", "发送 RMR=1 后 DUT 进入了 RMS。");
+  else
+    testStepPass("RMR 处理", "发送 RMR=1 后未检测到 DUT 报文输出。");
+  StopToLogging();
+}
+
+testcase Nm_AutomaticSession_Stop()
+{
+  InitReportAndLog("NM_Test_report");
+  StartToLogging();
+  testCaseTitle("NM_SESSION_STOP", "停止会话日志");
+  NmStopAllStimuli();
+  StopToLogging();
+  testStepPass("日志", "NM 会话日志已停止。");
+}

@@ -1,0 +1,273 @@
+/*@!Encoding:936*/
+
+variables
+{
+  enum AddressMode {FunctionalAddress, PhysicalAddress};
+  enum SuppressBitFlag {SuppressBitOff = 0, SuppressBitOn = 1};
+  enum DiagResult {DiagOK, DiagRxTimeout, DiagRxNegResponse, DiagTxError, DiagRxError, DiagGeneralError};
+  enum SessionType {DefaultSession = 1, ProgrammingSession = 2, ExtendedSession = 3};
+  enum ResetType {HardReset = 1, KeyOffOnReset = 2, SoftReset = 3};
+  enum RoutineControlType {StartRoutine = 1, StopRoutine = 2, RequestRoutineResults = 3};
+
+  byte DiagRxData[512];
+  int DiagRxDataLen;
+}
+
+enum DiagResult SendRawUdsRequest(enum AddressMode addressMode,
+                                  byte requestData[],
+                                  int requestLength,
+                                  byte expectedResponseSid,
+                                  byte responseData[],
+                                  int responseCapacity,
+                                  int &responseLength)
+{
+  int waitResult;
+  int pendingCount;
+  long sendResult;
+  diagRequest* request;
+  diagResponse request response;
+
+  responseLength = 0;
+  diagSetTarget("T1V_C_RLCR");
+  DiagResize(request, requestLength);
+  DiagSetPrimitiveData(request, requestData, requestLength);
+
+  if(addressMode == FunctionalAddress)
+    sendResult = diagsendFunctional(request);
+  else
+    sendResult = diagSendRequest(request);
+
+  if(sendResult < 0)
+    return DiagTxError;
+
+  testWaitForDiagRequestSent(request, 100);
+
+  // T1V_C_RLCR processes functional requests without sending a response.
+  if(addressMode == FunctionalAddress)
+  {
+    waitResult = testWaitForDiagResponse(request, 2000);
+    if(waitResult == 0)
+      return DiagOK;
+
+    return DiagRxError;
+  }
+
+  for(pendingCount = 0; pendingCount < 6; pendingCount++)
+  {
+    waitResult = testWaitForDiagResponse(request, 5000);
+    if(waitResult != 1)
+      return DiagRxTimeout;
+
+    diagGetLastResponse(request, response);
+    responseLength = diagGetPrimitiveData(response, responseData, responseCapacity);
+    if(responseLength <= 0)
+      return DiagRxError;
+
+    if((responseLength == 3) && (responseData[0] == 0x7F) &&
+       (responseData[1] == requestData[0]) && (responseData[2] == 0x78))
+      continue;
+
+    if(responseData[0] == 0x7F)
+      return DiagRxNegResponse;
+
+    if(responseData[0] != expectedResponseSid)
+      return DiagRxError;
+
+    return DiagOK;
+  }
+
+  return DiagRxTimeout;
+}
+
+enum DiagResult SendSuppressibleUdsRequest(enum AddressMode addressMode,
+                                            byte requestData[],
+                                            int requestLength,
+                                            byte expectedResponseSid,
+                                            enum SuppressBitFlag suppressBit)
+{
+  byte responseData[64];
+  int responseLength;
+  enum DiagResult result;
+
+  if(suppressBit == SuppressBitOn)
+  {
+    long sendResult;
+    diagRequest* request;
+
+    diagSetTarget("T1V_C_RLCR");
+    DiagResize(request, requestLength);
+    DiagSetPrimitiveData(request, requestData, requestLength);
+    if(addressMode == FunctionalAddress)
+      sendResult = diagsendFunctional(request);
+    else
+      sendResult = diagSendRequest(request);
+
+    if(sendResult < 0)
+      return DiagTxError;
+
+    testWaitForDiagRequestSent(request, 100);
+    return DiagOK;
+  }
+
+  result = SendRawUdsRequest(addressMode,
+                             requestData,
+                             requestLength,
+                             expectedResponseSid,
+                             responseData,
+                             elcount(responseData),
+                             responseLength);
+  return result;
+}
+
+enum DiagResult Service10_SessionControl(enum AddressMode addressMode,
+                                         enum SessionType sessionType,
+                                         enum SuppressBitFlag suppressBit)
+{
+  byte requestData[2];
+  enum DiagResult result;
+
+  requestData[0] = 0x10;
+  requestData[1] = sessionType;
+  if(suppressBit == SuppressBitOn)
+    requestData[1] |= 0x80;
+
+  result = SendSuppressibleUdsRequest(addressMode,
+                                      requestData,
+                                      elcount(requestData),
+                                      0x50,
+                                      suppressBit);
+  return result;
+}
+
+enum DiagResult Service11_ECUReset(enum AddressMode addressMode,
+                                   enum ResetType resetType,
+                                   enum SuppressBitFlag suppressBit)
+{
+  byte requestData[2];
+
+  requestData[0] = 0x11;
+  requestData[1] = resetType;
+  if(suppressBit == SuppressBitOn)
+    requestData[1] |= 0x80;
+
+  return SendSuppressibleUdsRequest(addressMode,
+                                    requestData,
+                                    elcount(requestData),
+                                    0x51,
+                                    suppressBit);
+}
+
+enum DiagResult Service3E_RequestTestPresent(enum AddressMode addressMode,
+                                              enum SuppressBitFlag suppressBit)
+{
+  byte requestData[2];
+
+  requestData[0] = 0x3E;
+  requestData[1] = 0;
+  if(suppressBit == SuppressBitOn)
+    requestData[1] = 0x80;
+
+  return SendSuppressibleUdsRequest(addressMode,
+                                    requestData,
+                                    elcount(requestData),
+                                    0x7E,
+                                    suppressBit);
+}
+
+enum DiagResult Service27_SecurityAccessSeed(enum AddressMode addressMode,
+                                              byte securityAccessType,
+                                              byte seedData[],
+                                              byte seedDataCapacity)
+{
+  byte requestData[2];
+  int responseLength;
+  int index;
+  enum DiagResult result;
+
+  requestData[0] = 0x27;
+  requestData[1] = securityAccessType;
+  result = SendRawUdsRequest(addressMode,
+                             requestData,
+                             elcount(requestData),
+                             0x67,
+                             DiagRxData,
+                             elcount(DiagRxData),
+                             responseLength);
+  if(result != DiagOK)
+    return result;
+
+  if((responseLength < 3) || (DiagRxData[1] != securityAccessType) ||
+     ((responseLength - 2) > seedDataCapacity))
+    return DiagRxError;
+
+  for(index = 0; index < (responseLength - 2); index++)
+    seedData[index] = DiagRxData[index + 2];
+
+  DiagRxDataLen = responseLength;
+  return DiagOK;
+}
+
+enum DiagResult Service27_SecurityAccessKey(enum AddressMode addressMode,
+                                             byte seedAccessType,
+                                             byte keyData[],
+                                             dword keyDataLength)
+{
+  byte requestData[128];
+  byte responseData[64];
+  int responseLength;
+  int index;
+  enum DiagResult result;
+
+  if(keyDataLength > (elcount(requestData) - 2))
+    return DiagGeneralError;
+
+  requestData[0] = 0x27;
+  requestData[1] = seedAccessType + 1;
+  for(index = 0; index < keyDataLength; index++)
+    requestData[index + 2] = keyData[index];
+
+  result = SendRawUdsRequest(addressMode,
+                             requestData,
+                             keyDataLength + 2,
+                             0x67,
+                             responseData,
+                             elcount(responseData),
+                             responseLength);
+  if((result == DiagOK) && ((responseLength < 2) ||
+     (responseData[1] != (seedAccessType + 1))))
+    return DiagRxError;
+
+  return result;
+}
+
+enum DiagResult Service31_RoutineControl(enum AddressMode addressMode,
+                                         enum RoutineControlType routineControlType,
+                                         word routineId,
+                                         byte routineData[],
+                                         word routineDataLength)
+{
+  byte requestData[512];
+  byte responseData[64];
+  int responseLength;
+  int index;
+  enum DiagResult result;
+
+  if(routineDataLength > (elcount(requestData) - 4))
+    return DiagGeneralError;
+
+  requestData[0] = 0x31;
+  requestData[1] = routineControlType;
+  requestData[2] = routineId >> 8;
+  requestData[3] = routineId;
+  for(index = 0; index < routineDataLength; index++)
+    requestData[index + 4] = routineData[index];
+
+  result = SendRawUdsRequest(addressMode,
+                             requestData,
+                             routineDataLength + 4,
+                             0x71,
+                             responseData,
+                             elcount(responseData),
+                             responseLength);
+  return result;
+}

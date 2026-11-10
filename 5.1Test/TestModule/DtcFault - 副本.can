@@ -1,0 +1,4941 @@
+/*@!Encoding:936*/
+includes
+{
+  #include "DiagnosticRawServices.cin"
+  #include "ReportAndLog.cin"
+  #include "merged_mode_controller.cin"
+}
+
+// 公共配置、故障注入状态和最近有效报文缓存。
+// 后续恢复帧基于缓存报文生成，以保持原报文布局、计数器和CRC关系。
+variables
+{
+  // 默认0x098通讯丢失注入时长；仅用于未传入独立时长参数的默认流程。
+  const dword kDtcFaultInjectDurationMs = 500;
+  const dword kDtcFaultObserveTimeMs = 500;
+  const int kDtcNormalCrcFaultFrameCount = 10;
+  const int kDtcInvalidFrameCount = 10;
+  const int kDtcDlcFaultValue = 7;
+  // 对齐K01A：清DTC收到54后等待500 ms，再开始故障注入。
+  const dword kDtcClearCompleteWaitMs = 500;
+
+  // 每个DTC用例开始前，连续收到5帧关联正常报文，确认报文基准稳定。
+  const int kDtcCaseBaselineFrameTargetCount = 5;
+
+  // 故障恢复后连续收到3帧正常报文，再读取DTC恢复状态。
+  const int kDtcRecoveryFrameTargetCount = 3;
+  // 首次恢复状态仍为09时，额外等待1帧正常报文后复读。
+  const int kDtcPostFaultRecoveryRetryFrameTargetCount = 1;
+
+  const int kDtcFaultPendingStatus = 0x01;
+
+  const int kDtcFaultStatus = 0x09;
+
+  const int kDtcRecoveredStatus = 0x08;
+  const dword kFlzcu9SignalFaultObserveTimeMs = 1000; // 0x49D周期100ms，信号无效持续10个周期
+  // 默认DTC结果判定等待；故障态读取后的恢复流程会显式跳过。
+  const dword kDtcResultJudgeDelayMs = 300;
+  const dword kDtcFaultFrameReadDelayMs = 5;
+  const dword kDtcTargetFrameReadDelayMs = 3;
+  const dword kDtcDiagnosticSettleTimeMs = 500;
+  const dword kDtcClearRetryDelayMs = 500;
+  const int kDtcClearRetryCount = 3;
+  const float kRrcr2BoundaryTimingToleranceMs = 2.0;
+  const int kCommunicationLossStabilizationFrameCount = 5;
+  char gDtcFaultCommLossStabilizedEvent[40] =
+    "DtcFault_CommLossStabilized";
+  char gDtcFaultCommLossInjectionStartedEvent[48] =
+    "DtcFault_CommLossInjectionStarted";
+  char gDtcFaultCommLossRecoverySentEvent[44] =
+    "DtcFault_CommLossRecoverySent";
+  char gDtcFaultRrcr2InjectionStartedEvent[46] =
+    "DtcFault_Rrcr2InjectionStarted";
+  char gDtcFaultRrcr2RecoverySentEvent[42] =
+    "DtcFault_Rrcr2RecoverySent";
+  char gDtcFaultDlcFrameSequenceCompleteEvent[48] =
+    "DtcFault_DlcFrameSequenceComplete";  char gDtcFaultCrcBoundaryCompleteEvent[48] =
+
+    "DtcFault_CrcBoundaryComplete";
+
+  char gDtcFaultCounterBoundaryCompleteEvent[48] =
+
+    "DtcFault_CounterBoundaryComplete";
+
+  char gDtcFaultSignalInvalidCompleteEvent[48] =
+
+    "DtcFault_SignalInvalidComplete";
+
+  char gDtcRecoveryFrameCompleteEvent[48] =
+
+    "DtcFault_RecoveryFrames";
+char gDtcReportDisplayTitle[256];
+  char gDtcLoggingGroupName[160];
+  const dword kDtcExpectedCodeLeftZoneSignalInvalid = 0xC44481;
+  const dword kDtcOneboxMessageLoss = 0xC12987;
+  const dword kDtcVehicleSpeedSignalInvalid = 0xC41881;
+  const dword kDtcSasMessageLoss = 0xC13187;
+  const dword kDtcAcuMessageLoss = 0xC15187;
+  const dword kDtcRrcrMessageLoss = 0xD16987;
+  const dword kDtcLeftZoneMessageLoss = 0xC14187;
+  const dword kDtcVcuCommunicationLoss = 0xC14087;
+  const dword kDtcVcuNetworkSignalInvalid = 0xC44381;  const int kDtcRecoverySourceFlzcu1 = 1;
+
+  const int kDtcRecoverySourceFrzcu1 = 2;
+
+  const int kDtcRecoverySourceRzcu2 = 3;
+
+  const int kDtcRecoverySourceOnebox1 = 4;
+
+  const int kDtcRecoverySourceOnebox3 = 5;
+
+  const int kDtcRecoverySourceSas1 = 6;
+
+  const int kDtcRecoverySourceAcu2 = 7;
+
+  const int kDtcRecoverySourceAcu3 = 8;
+
+  const int kDtcRecoverySourceRrcr2 = 9;
+
+  const int kDtcRecoverySourceIccCom8 = 10;
+
+  const int kDtcRecoverySourceFlzcu9 = 11;
+  const int kDtcRecoverySourceVcuCom10 = 12;
+
+
+
+  const int kDtcSignalCriterionOnebox1SpeedValid = 1;
+
+  const int kDtcSignalCriterionOnebox1SpeedRaw = 2;
+
+  const int kDtcSignalCriterionOnebox3Standstill = 3;
+
+  const int kDtcSignalCriterionSasAngleRaw = 4;
+
+  const int kDtcSignalCriterionSasAngleValid = 5;
+
+  const int kDtcSignalCriterionSasAngleSpeedValid = 6;
+
+  const int kDtcSignalCriterionAcu2LateralRaw = 7;
+
+  const int kDtcSignalCriterionAcu2YawRaw = 8;
+
+  const int kDtcSignalCriterionAcu2YawValid = 9;
+
+  const int kDtcSignalCriterionAcu3LongitudinalRaw = 10;
+
+  const int kDtcSignalCriterionAcu3LongitudinalValid = 11;
+
+  const int kDtcSignalCriterionFlzcu9ArmingStatus = 12;
+  message FL_DA_CANFD_RLCR::RRCR_2 gLastRRCR2;
+  message FL_DA_CANFD_RLCR::RRCR_2 gRrcr2BoundaryRecoveryFrame;
+  message FL_DA_CANFD_RLCR::ONEBOX_1 gLastOnebox1;
+  message FL_DA_CANFD_RLCR::SAS_1 gLastSas1;
+  message FL_DA_CANFD_RLCR::ACU_3 gLastAcu3;
+  message FL_DA_CANFD_RLCR::ICC_COM_8 gLastIccCom8;
+  message FL_DA_CANFD_RLCR::FLZCU_1 gLastFlzcu1;
+  message FL_DA_CANFD_RLCR::VCU_COM_10 gLastVcuCom10;
+  message FL_DA_CANFD_RLCR::ONEBOX_1 gCommunicationLossRecoveryOnebox1;
+  message FL_DA_CANFD_RLCR::SAS_1 gCommunicationLossRecoverySas1;
+  message FL_DA_CANFD_RLCR::ACU_3 gCommunicationLossRecoveryAcu3;
+  message FL_DA_CANFD_RLCR::ICC_COM_8 gCommunicationLossRecoveryIccCom8;
+  message FL_DA_CANFD_RLCR::FLZCU_1 gCommunicationLossRecoveryFlzcu1;
+  message FL_DA_CANFD_RLCR::VCU_COM_10 gCommunicationLossRecoveryVcuCom10;
+  msTimer gRrcr2BoundaryRecoveryTimer;
+  msTimer gCommunicationLossRecoveryTimer;
+  int gLastRRCR2Valid;
+  int gLastOnebox1Valid;
+  int gLastSas1Valid;
+  int gLastAcu3Valid;
+  int gLastIccCom8Valid;
+  int gLastFlzcu1Valid;
+  int gLastVcuCom10Valid;
+  int gRrcr2BoundaryArm;
+  int gRrcr2BoundaryInjectionActive;
+  int gRrcr2BoundaryRecoveryFrameSent;
+  int gRrcr2BoundaryRequestedDurationMs;
+  float gLastRRCR2TimestampMs;
+  float gRrcr2BoundaryLastFrameTimestampMs;
+  float gRrcr2BoundaryRecoveryTimestampMs;
+  int gRrcr2BoundaryUnexpectedFrameCount;
+  float gRrcr2BoundaryFirstUnexpectedFrameTimestampMs;
+  int gCommunicationLossBoundaryArm;
+  int gCommunicationLossBoundaryInjectionActive;
+  int gCommunicationLossBoundaryRecoveryFrameSent;
+  int gCommunicationLossBoundarySource;
+  int gCommunicationLossBoundaryRequestedDurationMs;
+  float gCommunicationLossBoundaryLastFrameTimestampMs;
+  float gCommunicationLossBoundaryRecoveryTimestampMs;
+  int gCommunicationLossBoundaryUnexpectedFrameCount;
+  float gCommunicationLossBoundaryFirstUnexpectedFrameTimestampMs;
+  int gCommunicationLossStabilizationActive;
+  int gCommunicationLossStabilizationSource;
+  int gCommunicationLossStabilizationFrameCount;
+  int gCommunicationLossStabilizationReady;
+  float gCommunicationLossPreviousTimestampMs;
+  float gCommunicationLossObservedCycleMs;
+  int gDlcFaultFrameSequenceActive;
+  int gDlcFaultFrameSequenceMessageId;
+  int gDlcFaultFrameSequenceObservedCount;
+  int gDlcFaultFrameSequenceComplete;
+  long gDlcFaultFrameSequenceResetResult;
+  int gDtcCaseBaselineSource;
+
+  int gDtcReadRecoverySource;
+
+  int gDtcRecoveryFrameMonitorActive;
+
+  int gDtcRecoveryFrameSource;
+
+  int gDtcRecoveryFrameCount;
+
+  int gDtcRecoveryFrameTargetCount;
+
+  int gDtcPostFaultRecoveryMonitorStarted;
+
+  int gDtcStartRecoveryOnFinalResponse;
+  int gDtcSkipReadResponseJudgeDelay;
+
+  int gDtcFaultStatusAllowPendingStatus;
+
+  int gDtcSignalInvalidFrameMonitorActive;
+
+  int gDtcSignalInvalidFrameSource;
+
+  int gDtcSignalInvalidCriterion;
+
+  int gDtcSignalInvalidFrameCount;
+  float gDtcFaultFrameCompletionTimestampMs;
+  int gDtcFaultFrameCompletionReady;
+  int gCrcBoundaryActive;
+  int gCrcBoundaryInjectionStarted;
+  int gCrcBoundarySource;
+  int gCrcBoundaryTargetCycles;
+  int gCrcBoundaryObservedCycles;
+  int gCrcBoundaryComplete;
+  char gCrcBoundaryMessageName[64];
+  float gCrcBoundaryFirstFrameTimestampMs;
+  int gCrcBoundaryUnexpectedValidFrameCount;
+  int gCounterBoundaryActive;
+  int gCounterBoundaryBaselineActive;
+  int gCounterBoundaryCounterValueValid;
+  int gCounterBoundarySource;
+  int gCounterBoundaryTargetCycles;
+  int gCounterBoundaryObservedCycles;
+  int gCounterBoundaryComplete;
+  char gCounterBoundaryMessageName[64];
+  float gCounterBoundaryFirstFrameTimestampMs;
+  byte gCounterBoundaryCurrentCounter;
+  byte gCounterBoundaryFirstCounter;
+  int gCounterBoundaryUnexpectedChangedFrameCount;
+  byte gPressureTestStopRequested = 0;
+}
+
+// 按X正常结束当前压力测试；测试用例返回后再停止测量即可避免强制终止。
+on key 'x'
+{
+  if(DtcFaultControllerStopPressureTest())
+  {
+    gPressureTestStopRequested = 1;
+  }
+}
+
+// ===== 报文监控与故障帧边界控制 =====
+void ObserveCrcBoundaryFrame(int crcSource, int isCrcValid)
+{
+  if((!gCrcBoundaryActive) || (gCrcBoundarySource != crcSource))
+    return;
+
+  // CRC不可用时不计数；注入窗口内混入正常CRC帧则不能视为连续错误。
+  if(isCrcValid < 0)
+    return;
+  if(isCrcValid)
+  {
+    // The IL switch can take effect one cycle later. Ignore normal frames
+    // before the first observed CRC error, then require no valid gaps.
+    if(!gCrcBoundaryInjectionStarted)
+      return;
+    gCrcBoundaryUnexpectedValidFrameCount++;
+    return;
+  }
+
+  gCrcBoundaryInjectionStarted = 1;
+  gCrcBoundaryObservedCycles++;
+  if(gCrcBoundaryObservedCycles == 1)
+  {
+    gCrcBoundaryFirstFrameTimestampMs = timeNowFloat() / 100.0;
+    testStep("故障注入",
+             "%s：第一帧CRC/校验和错误，测量时间戳=%.3f ms。",
+             gCrcBoundaryMessageName, gCrcBoundaryFirstFrameTimestampMs);
+  }
+
+  if(gCrcBoundaryObservedCycles < gCrcBoundaryTargetCycles)
+    return;
+
+  gDtcFaultFrameCompletionTimestampMs = timeNowFloat() / 100.0;
+  gDtcFaultFrameCompletionReady = 1;
+
+  testStep("故障注入",
+           "%s已按原周期发送并确认%d帧CRC/校验和错误。",
+           gCrcBoundaryMessageName, gCrcBoundaryObservedCycles);
+  gCrcBoundaryActive = 0;
+  gCrcBoundaryComplete = 1;
+  TestSupplyTextEvent(gDtcFaultCrcBoundaryCompleteEvent);
+}
+// COUNT边界用例同样按实际接收帧数计数，避免用固定时间估算造成多发或少发。
+void ObserveCounterBoundaryFrame(int counterSource)
+{
+  byte currentCounter;
+
+  if(gCounterBoundarySource != counterSource)
+    return;
+
+  currentCounter = gCounterBoundaryCurrentCounter & 0x0F;
+  if(gCounterBoundaryBaselineActive)
+  {
+    gCounterBoundaryFirstCounter = currentCounter;
+    gCounterBoundaryCounterValueValid = 1;
+    return;
+  }
+
+  if(!gCounterBoundaryActive)
+    return;
+
+  if(!gCounterBoundaryCounterValueValid)
+  {
+    gCounterBoundaryFirstCounter = currentCounter;
+    gCounterBoundaryCounterValueValid = 1;
+    return;
+  }
+
+  if(gCounterBoundaryObservedCycles == 0)
+  {
+    if(currentCounter != gCounterBoundaryFirstCounter)
+    {
+      // Skip the first increment from the normal baseline; count only repeated values.
+      gCounterBoundaryFirstCounter = currentCounter;
+      return;
+    }
+  }
+  else if(currentCounter != gCounterBoundaryFirstCounter)
+  {
+    // COUNT阈值用例要求连续冻结；发现递增或跳变帧时不纳入错误帧计数。
+    gCounterBoundaryUnexpectedChangedFrameCount++;
+    return;
+  }
+
+  gCounterBoundaryObservedCycles++;
+  if(gCounterBoundaryObservedCycles == 1)
+  {
+    gCounterBoundaryFirstFrameTimestampMs = timeNowFloat() / 100.0;
+    testStep("故障注入",
+             "%s：第一帧COUNT错误，测量时间戳=%.3f ms。",
+             gCounterBoundaryMessageName, gCounterBoundaryFirstFrameTimestampMs);
+  }
+
+  if(gCounterBoundaryObservedCycles < gCounterBoundaryTargetCycles)
+    return;
+
+  gDtcFaultFrameCompletionTimestampMs = timeNowFloat() / 100.0;
+  gDtcFaultFrameCompletionReady = 1;
+
+  if(counterSource == 1)
+    @sysvar::Vehicle_input::Message_Counter::FLZCU_1_0x23B = 0;
+  else if(counterSource == 2)
+    @sysvar::Vehicle_input::Message_Counter::FRZCU_1_0x2AB = 0;
+  else if(counterSource == 3)
+    @sysvar::Vehicle_input::Message_Counter::RZCU_2_0x2BB = 0;
+  else if(counterSource == 4)
+    @sysvar::Vehicle_input::Message_Counter::ONEBOX_1_0x98_RC1 = 0;
+  else if(counterSource == 5)
+    @sysvar::Vehicle_input::Message_Counter::ONEBOX_3_0x22B_RC1 = 0;
+  else if(counterSource == 6)
+    @sysvar::Vehicle_input::Message_Counter::SAS_1_0x132 = 0;
+  else if(counterSource == 7)
+    @sysvar::Vehicle_input::Message_Counter::ACU_2_0x31 = 0;
+  else if(counterSource == 8)
+    @sysvar::Vehicle_input::Message_Counter::ACU_3_0x021 = 0;
+  else if(counterSource == 9)
+    @sysvar::Vehicle_input::Message_Counter::RRCR_2_0x4F7 = 0;
+  else if(counterSource == 14)
+    @sysvar::Vehicle_input::Message_Counter::VCU_COM_10_0x38 = 0;
+
+  @sysvar::Vehicle_input::Message_Counter::Counter_unchange = 0;
+  testStep("故障注入",
+           "%s已按原周期发送并确认连续%d帧COUNT冻结。",
+           gCounterBoundaryMessageName, gCounterBoundaryObservedCycles);
+  gCounterBoundaryActive = 0;
+  gCounterBoundaryComplete = 1;
+  TestSupplyTextEvent(gDtcFaultCounterBoundaryCompleteEvent);
+}
+
+void ObserveCommunicationLossStabilizationFrame(int faultSource)
+{
+  float timestampMs;
+
+  if((!gCommunicationLossStabilizationActive) ||
+     (gCommunicationLossStabilizationSource != faultSource))
+    return;
+
+  timestampMs = timeNowFloat() / 100.0;
+  if(gCommunicationLossStabilizationFrameCount > 0)
+    gCommunicationLossObservedCycleMs =
+      timestampMs - gCommunicationLossPreviousTimestampMs;
+
+  gCommunicationLossPreviousTimestampMs = timestampMs;
+  gCommunicationLossStabilizationFrameCount++;
+  if(gCommunicationLossStabilizationFrameCount >=
+     kCommunicationLossStabilizationFrameCount)
+  {
+    gCommunicationLossStabilizationActive = 0;
+    gCommunicationLossStabilizationReady = 1;
+    TestSupplyTextEvent(gDtcFaultCommLossStabilizedEvent);
+  }
+}
+
+void ObserveCommunicationLossBoundaryFrameDuringLoss(int faultSource)
+{
+  float frameTimestampMs;
+
+  if((!gCommunicationLossBoundaryInjectionActive) ||
+     (gCommunicationLossBoundarySource != faultSource))
+    return;
+
+  frameTimestampMs = timeNowFloat() / 100.0;
+  gCommunicationLossBoundaryUnexpectedFrameCount++;
+  if(gCommunicationLossBoundaryUnexpectedFrameCount == 1)
+    gCommunicationLossBoundaryFirstUnexpectedFrameTimestampMs = frameTimestampMs;
+
+  // A frame can already be queued when the stop request takes effect.
+  // Re-anchor the loss window to the last frame actually seen on the bus.
+  gCommunicationLossBoundaryLastFrameTimestampMs = frameTimestampMs;
+  setTimer(gCommunicationLossRecoveryTimer,
+           gCommunicationLossBoundaryRequestedDurationMs);
+}
+
+void ObserveRrcr2BoundaryFrameDuringLoss()
+{
+  if(!gRrcr2BoundaryInjectionActive)
+    return;
+
+  gRrcr2BoundaryUnexpectedFrameCount++;
+  if(gRrcr2BoundaryUnexpectedFrameCount == 1)
+    gRrcr2BoundaryFirstUnexpectedFrameTimestampMs = timeNowFloat() / 100.0;
+}
+void ObserveDtcRecoveryFrame(int recoverySource, int isFrameNormal)
+{
+  if((!gDtcRecoveryFrameMonitorActive) ||
+     (gDtcRecoveryFrameSource != recoverySource))
+    return;
+  if(!isFrameNormal)
+  {
+    gDtcRecoveryFrameCount = 0;
+    return;
+  }
+  gDtcRecoveryFrameCount++;
+  if(gDtcRecoveryFrameCount >= gDtcRecoveryFrameTargetCount)
+  {
+    gDtcRecoveryFrameMonitorActive = 0;
+    TestSupplyTextEvent(gDtcRecoveryFrameCompleteEvent);
+  }
+}
+
+void ObserveDtcSignalInvalidFrame(int recoverySource, int isSignalInvalid)
+{
+  if((!gDtcSignalInvalidFrameMonitorActive) ||
+     (gDtcSignalInvalidFrameSource != recoverySource))
+    return;
+  if(!isSignalInvalid)
+  {
+    gDtcSignalInvalidFrameCount = 0;
+    return;
+  }
+  gDtcSignalInvalidFrameCount++;
+  if(gDtcSignalInvalidFrameCount >= kDtcInvalidFrameCount)
+  {
+    gDtcFaultFrameCompletionTimestampMs = timeNowFloat() / 100.0;
+    gDtcFaultFrameCompletionReady = 1;
+    gDtcSignalInvalidFrameMonitorActive = 0;
+    TestSupplyTextEvent(gDtcFaultSignalInvalidCompleteEvent);
+  }
+}
+
+void StartDtcSignalInvalidFrameMonitor(int recoverySource, int criterion)
+{
+  gDtcFaultFrameCompletionTimestampMs = 0.0;
+  gDtcFaultFrameCompletionReady = 0;
+  gDtcSignalInvalidFrameMonitorActive = 1;
+  gDtcSignalInvalidFrameSource = recoverySource;
+  gDtcSignalInvalidCriterion = criterion;
+  gDtcSignalInvalidFrameCount = 0;
+}
+
+// 信号无效帧由接收回调计数；此处只等待达到目标帧数的文本事件，再统一判定超时或通过。
+int WaitForDtcSignalInvalidFrames(int cycleMs, char messageName[])
+{
+  int timeoutMs;
+
+  timeoutMs = (cycleMs * (kDtcInvalidFrameCount + 2)) + 100;
+  testWaitForTextEvent(gDtcFaultSignalInvalidCompleteEvent, timeoutMs);
+  gDtcSignalInvalidFrameMonitorActive = 0;
+  if(gDtcSignalInvalidFrameCount < kDtcInvalidFrameCount)
+  {
+    testStepFail("故障注入", "%s在%d ms内收到%d/%d帧无效报文。",
+                 messageName, gDtcSignalInvalidFrameCount,
+                 kDtcInvalidFrameCount, timeoutMs);
+    return 0;
+  }
+
+  testStepPass("故障注入", "%s已收到%d帧无效报文。",
+               messageName, gDtcSignalInvalidFrameCount);
+  return 1;
+}
+
+// 所有信号无效用例共用：基线正常、54后等待500 ms，再开始连续10帧异常确认。
+int BeginDtcSignalInvalidCase(int recoverySource, int criterion)
+{
+  if(!BeginDtcCase(recoverySource))
+    return 0;
+
+  StartDtcSignalInvalidFrameMonitor(recoverySource, criterion);
+  return 1;
+}
+
+void WaitAfterFaultFramesBeforeDtcRead(char messageName[])
+{
+  float elapsedMs;
+  int remainingWaitMs;
+
+  if(gDtcFaultFrameCompletionReady)
+  {
+    elapsedMs = (timeNowFloat() / 100.0) -
+                gDtcFaultFrameCompletionTimestampMs;
+    gDtcFaultFrameCompletionTimestampMs = 0.0;
+    gDtcFaultFrameCompletionReady = 0;
+    if(elapsedMs >= 0.0)
+    {
+      remainingWaitMs = kDtcTargetFrameReadDelayMs - (int)elapsedMs;
+      if(remainingWaitMs > 0)
+      {
+        testStep("DTC读取等待",
+                 "%s第10帧故障报文后已过%.3f ms，再等待%d ms读取DTC。",
+                 messageName, elapsedMs, remainingWaitMs);
+        testWaitForTimeout(remainingWaitMs);
+      }
+      else
+      {
+        testStep("DTC读取等待",
+                 "%s第10帧故障报文后已过%.3f ms，立即读取DTC。",
+                 messageName, elapsedMs);
+      }
+      return;
+    }
+  }
+
+  testStep("DTC读取等待", "%s目标故障帧已确认，等待%d ms后读取DTC。",
+           messageName, kDtcFaultFrameReadDelayMs);
+  testWaitForTimeout(kDtcFaultFrameReadDelayMs);
+}
+// 连续10帧故障后等待3 ms读取故障态DTC；读取完成后恢复，收到3帧正常报文即复读。
+int CompleteDtcSignalInvalidCase(dword expectedDtc, int cycleMs,
+                                 char messageName[])
+{
+  if(!WaitForDtcSignalInvalidFrames(cycleMs, messageName))
+    return 0;
+
+  WaitAfterFaultFramesBeforeDtcRead(messageName);
+  return CheckCurrentDtc(expectedDtc);
+}
+// 报文接收回调：先复制完整数据并重算CRC，只把确认无效的帧交给边界计数器。
+// ===== 报文接收回调：缓存最新正常帧，并驱动CRC、COUNT、通讯丢失、恢复和信号无效监控 =====
+on message FL_DA_CANFD_RLCR::FLZCU_1
+{
+  byte frameData[64];
+  int i;
+  int payloadLength;
+
+  ObserveDlcFaultFrame(0x23B, this.dlc);
+  gLastFlzcu1 = this;
+  gLastFlzcu1Valid = 1;
+  payloadLength = DtcFaultGetPayloadLength(this.dlc);
+  if(payloadLength > 64) payloadLength = 64;
+  for(i = 0; i < payloadLength; i++)
+    frameData[i] = this.byte(i);
+
+  ObserveCommunicationLossBoundaryFrameDuringLoss(5);
+  TryStartCommunicationLossBoundary(5);
+  ObserveCommunicationLossStabilizationFrame(5);
+  ObserveDtcCrcFrame(frameData, payloadLength, 1, 0, 0x36);
+  gCounterBoundaryCurrentCounter = this.byte(1);
+  ObserveCounterBoundaryFrame(1);
+  ObserveDtcRecoveryFrame(kDtcRecoverySourceFlzcu1,
+    (payloadLength == 8) && DtcFaultGetCrcState(frameData, payloadLength, 0, 0x36));
+}
+
+// 0x49D signal-invalid and DLC recovery monitor.
+on message FL_DA_CANFD_RLCR::FLZCU_9
+{
+  ObserveDlcFaultFrame(0x49D, this.dlc);
+  ObserveDtcRecoveryFrame(kDtcRecoverySourceFlzcu9,
+    (this.dlc == 8) && (this.FLZCU_9_ArmingSts == 0));
+  ObserveDtcSignalInvalidFrame(kDtcRecoverySourceFlzcu9,
+    (gDtcSignalInvalidCriterion == kDtcSignalCriterionFlzcu9ArmingStatus) &&
+    (this.FLZCU_9_ArmingSts == 3));
+}
+
+on message FL_DA_CANFD_RLCR::FRZCU_1
+{
+  byte frameData[64];
+  int i;
+  int payloadLength;
+
+  ObserveDlcFaultFrame(0x2AB, this.dlc);
+  payloadLength = DtcFaultGetPayloadLength(this.dlc);
+  if(payloadLength > 64) payloadLength = 64;
+  for(i = 0; i < payloadLength; i++)
+    frameData[i] = this.byte(i);
+  ObserveDtcCrcFrame(frameData, payloadLength, 2, 0, 0x3A);
+  gCounterBoundaryCurrentCounter = this.byte(1);
+  ObserveCounterBoundaryFrame(2);
+  ObserveDtcRecoveryFrame(kDtcRecoverySourceFrzcu1,
+    (payloadLength == 8) && DtcFaultGetCrcState(frameData, payloadLength, 0, 0x3A));
+}
+
+on message FL_DA_CANFD_RLCR::RZCU_2
+{
+  byte frameData[64];
+  int i;
+  int payloadLength;
+
+  ObserveDlcFaultFrame(0x2BB, this.dlc);
+  payloadLength = DtcFaultGetPayloadLength(this.dlc);
+  if(payloadLength > 64) payloadLength = 64;
+  for(i = 0; i < payloadLength; i++)
+    frameData[i] = this.byte(i);
+  ObserveDtcCrcFrame(frameData, payloadLength, 3, 0, 0x3B);
+  gCounterBoundaryCurrentCounter = this.byte(1);
+  ObserveCounterBoundaryFrame(3);
+  ObserveDtcRecoveryFrame(kDtcRecoverySourceRzcu2,
+    (payloadLength == 8) && DtcFaultGetCrcState(frameData, payloadLength, 0, 0x3B));
+}
+
+on message FL_DA_CANFD_RLCR::ONEBOX_1
+{
+  byte frameData[64];
+  int i;
+  int payloadLength;
+  int crc1State;
+  int signalInvalid;
+
+  ObserveDlcFaultFrame(0x098, this.dlc);
+  gLastOnebox1 = this;
+  gLastOnebox1Valid = 1;
+  payloadLength = DtcFaultGetPayloadLength(this.dlc);
+  if(payloadLength > 64) payloadLength = 64;
+  for(i = 0; i < payloadLength; i++)
+    frameData[i] = this.byte(i);
+
+  crc1State = DtcFaultGetCrcState(frameData, payloadLength, 0, 0x49);
+  ObserveCommunicationLossBoundaryFrameDuringLoss(0);
+  TryStartCommunicationLossBoundary(0);
+  ObserveCommunicationLossStabilizationFrame(0);
+  ObserveCrcBoundaryFrame(4, crc1State);
+  ObserveDtcCrcFrame(frameData, payloadLength, 10, 8, 0x4A);
+  gCounterBoundaryCurrentCounter = this.byte(1);
+  ObserveCounterBoundaryFrame(4);
+  ObserveDtcRecoveryFrame(kDtcRecoverySourceOnebox1,
+    (payloadLength == 24) &&
+    DtcFaultGetCrcState(frameData, payloadLength, 0, 0x49) &&
+    DtcFaultGetCrcState(frameData, payloadLength, 8, 0x4A));
+  signalInvalid = 0;
+  if(gDtcSignalInvalidCriterion == kDtcSignalCriterionOnebox1SpeedValid)
+    signalInvalid = (this.ESP1_VehicleSpeedVSOSigValidData == 1);
+  else if(gDtcSignalInvalidCriterion == kDtcSignalCriterionOnebox1SpeedRaw)
+    signalInvalid = (this.ABS_ESP_1_VehicleSpeedVSOSig >= 511.9);
+  ObserveDtcSignalInvalidFrame(kDtcRecoverySourceOnebox1, signalInvalid);
+}
+
+on message FL_DA_CANFD_RLCR::ONEBOX_3
+{
+  byte frameData[64];
+  int i;
+  int payloadLength;
+  int signalInvalid;
+
+  ObserveDlcFaultFrame(0x22B, this.dlc);
+  payloadLength = DtcFaultGetPayloadLength(this.dlc);
+  if(payloadLength > 64) payloadLength = 64;
+  for(i = 0; i < payloadLength; i++)
+    frameData[i] = this.byte(i);
+
+  ObserveDtcCrcFrame(frameData, payloadLength, 5, 0, 0x4D);
+  ObserveDtcCrcFrame(frameData, payloadLength, 11, 8, 0x4E);
+  ObserveDtcCrcFrame(frameData, payloadLength, 12, 24, 0x50);
+  gCounterBoundaryCurrentCounter = this.byte(1);
+  ObserveCounterBoundaryFrame(5);
+  ObserveDtcRecoveryFrame(kDtcRecoverySourceOnebox3,
+    (payloadLength == 48) &&
+    DtcFaultGetCrcState(frameData, payloadLength, 0, 0x4D) &&
+    DtcFaultGetCrcState(frameData, payloadLength, 8, 0x4E) &&
+    DtcFaultGetCrcState(frameData, payloadLength, 24, 0x50));
+  signalInvalid = 0;
+  if(gDtcSignalInvalidCriterion == kDtcSignalCriterionOnebox3Standstill)
+    signalInvalid = (this.VehicleStandstill == 2);
+  ObserveDtcSignalInvalidFrame(kDtcRecoverySourceOnebox3, signalInvalid);
+}
+
+on message FL_DA_CANFD_RLCR::SAS_1
+{
+  byte frameData[64];
+  int i;
+  int payloadLength;
+  int signalInvalid;
+
+  ObserveDlcFaultFrame(0x132, this.dlc);
+  gLastSas1 = this;
+  gLastSas1Valid = 1;
+  payloadLength = DtcFaultGetPayloadLength(this.dlc);
+  if(payloadLength > 64) payloadLength = 64;
+  for(i = 0; i < payloadLength; i++)
+    frameData[i] = this.byte(i);
+
+  ObserveCommunicationLossBoundaryFrameDuringLoss(1);
+  TryStartCommunicationLossBoundary(1);
+  ObserveCommunicationLossStabilizationFrame(1);
+  ObserveDtcCrcFrame(frameData, payloadLength, 6, 0, 0x35);
+  gCounterBoundaryCurrentCounter = this.byte(1);
+  ObserveCounterBoundaryFrame(6);
+  ObserveDtcRecoveryFrame(kDtcRecoverySourceSas1,
+    (payloadLength == 8) && DtcFaultGetCrcState(frameData, payloadLength, 0, 0x35));
+  signalInvalid = 0;
+  if(gDtcSignalInvalidCriterion == kDtcSignalCriterionSasAngleRaw)
+    signalInvalid = (this.SAM_1_SteeringAngle >= 2047.9);
+  else if(gDtcSignalInvalidCriterion == kDtcSignalCriterionSasAngleValid)
+    signalInvalid = (this.SAM_1_SteeringAngleVD == 1);
+  else if(gDtcSignalInvalidCriterion == kDtcSignalCriterionSasAngleSpeedValid)
+    signalInvalid = (this.SAM_1_SteeringAngleSpeedVD == 1);
+  ObserveDtcSignalInvalidFrame(kDtcRecoverySourceSas1, signalInvalid);
+}
+
+on message FL_DA_CANFD_RLCR::ACU_2
+{
+  byte frameData[64];
+  int i;
+  int payloadLength;
+  int signalInvalid;
+
+  ObserveDlcFaultFrame(0x031, this.dlc);
+  payloadLength = DtcFaultGetPayloadLength(this.dlc);
+  if(payloadLength > 64) payloadLength = 64;
+  for(i = 0; i < payloadLength; i++)
+    frameData[i] = this.byte(i);
+  ObserveDtcRecoveryFrame(kDtcRecoverySourceAcu2,
+    (payloadLength == 8) && DtcFaultGetCrcState(frameData, payloadLength, 0, 0x01));
+  ObserveDtcCrcFrame(frameData, payloadLength, 7, 0, 0x01);
+  gCounterBoundaryCurrentCounter = this.byte(1);
+  ObserveCounterBoundaryFrame(7);
+  signalInvalid = 0;
+  if(gDtcSignalInvalidCriterion == kDtcSignalCriterionAcu2LateralRaw)
+    signalInvalid = (this.ACU_2_LateralAcceleration >= 63.5);
+  else if(gDtcSignalInvalidCriterion == kDtcSignalCriterionAcu2YawRaw)
+    signalInvalid = (this.ACU_2_YawRate >= 475.3);
+  else if(gDtcSignalInvalidCriterion == kDtcSignalCriterionAcu2YawValid)
+    signalInvalid = (this.ACU_2_YawrateSigValidData == 2);
+  ObserveDtcSignalInvalidFrame(kDtcRecoverySourceAcu2, signalInvalid);
+}
+on message FL_DA_CANFD_RLCR::ACU_3
+{
+  byte frameData[64];
+  int i;
+  int payloadLength;
+  int signalInvalid;
+
+  ObserveDlcFaultFrame(0x021, this.dlc);
+  gLastAcu3 = this;
+  gLastAcu3Valid = 1;
+  payloadLength = DtcFaultGetPayloadLength(this.dlc);
+  if(payloadLength > 64) payloadLength = 64;
+  for(i = 0; i < payloadLength; i++)
+    frameData[i] = this.byte(i);
+
+  ObserveDtcRecoveryFrame(kDtcRecoverySourceAcu3,
+    (payloadLength == 8) && DtcFaultGetCrcState(frameData, payloadLength, 0, 0x02));
+  ObserveCommunicationLossBoundaryFrameDuringLoss(2);
+  TryStartCommunicationLossBoundary(2);
+  ObserveCommunicationLossStabilizationFrame(2);
+  ObserveDtcCrcFrame(frameData, payloadLength, 8, 0, 0x02);
+  gCounterBoundaryCurrentCounter = this.byte(1);
+  ObserveCounterBoundaryFrame(8);
+  signalInvalid = 0;
+  if(gDtcSignalInvalidCriterion == kDtcSignalCriterionAcu3LongitudinalRaw)
+    signalInvalid = (this.ACU_3_LongitudinalAcceleration >= 63.5);
+  else if(gDtcSignalInvalidCriterion == kDtcSignalCriterionAcu3LongitudinalValid)
+    signalInvalid = (this.ACU_3_LongitudinalAccelerationVD == 2);
+  ObserveDtcSignalInvalidFrame(kDtcRecoverySourceAcu3, signalInvalid);
+}
+on message FL_DA_CANFD_RLCR::ICC_COM_8
+{
+  ObserveDtcRecoveryFrame(kDtcRecoverySourceIccCom8, this.dlc == 8);
+  gLastIccCom8 = this;
+  gLastIccCom8Valid = 1;
+  ObserveCommunicationLossBoundaryFrameDuringLoss(4);
+  TryStartCommunicationLossBoundary(4);
+  ObserveCommunicationLossStabilizationFrame(4);
+}
+// 0x4F7是通讯丢失边界用例的特殊报文：收到最后正常帧时启动丢失定时器，
+// 以该帧时间戳为零点计算实际丢失时长。
+on message FL_DA_CANFD_RLCR::VCU_COM_10
+{
+  byte frameData[64];
+  int i;
+  int payloadLength;
+  int crcState;
+
+  ObserveDlcFaultFrame(0x038, this.dlc);
+  gLastVcuCom10 = this;
+  gLastVcuCom10Valid = 1;
+  payloadLength = DtcFaultGetPayloadLength(this.dlc);
+  if(payloadLength > 64) payloadLength = 64;
+  for(i = 0; i < payloadLength; i++)
+    frameData[i] = this.byte(i);
+
+  crcState = DtcFaultGetCrcState(frameData, payloadLength, 0, 0x68);
+  ObserveDtcRecoveryFrame(kDtcRecoverySourceVcuCom10,
+                          (payloadLength == 16) && (crcState == 1));
+  ObserveCommunicationLossBoundaryFrameDuringLoss(6);
+  TryStartCommunicationLossBoundary(6);
+  ObserveCommunicationLossStabilizationFrame(6);
+  ObserveDtcCrcFrame(frameData, payloadLength, 13, 0, 0x68);
+  gCounterBoundaryCurrentCounter = this.byte(1);
+  ObserveCounterBoundaryFrame(14);
+}
+on message FL_DA_CANFD_RLCR::RRCR_2
+{
+  byte frameData[64];
+  int i;
+  int payloadLength;
+
+  ObserveDlcFaultFrame(0x4F7, this.dlc);
+  gLastRRCR2 = this;
+  gLastRRCR2Valid = 1;
+  gLastRRCR2TimestampMs = timeNowFloat() / 100.0;
+  payloadLength = DtcFaultGetPayloadLength(this.dlc);
+  if(payloadLength > 64) payloadLength = 64;
+  for(i = 0; i < payloadLength; i++)
+    frameData[i] = this.byte(i);
+
+  // RRCR_2有专用接收回调，因此单独送入休眠唤醒监控。
+  SrRecordTargetMessage(this.ID, this.dlc);
+  ObserveRrcr2BoundaryFrameDuringLoss();
+  ObserveCommunicationLossStabilizationFrame(3);
+
+  if(gRrcr2BoundaryArm)
+  {
+    gRrcr2BoundaryArm = 0;
+    gRrcr2BoundaryInjectionActive = 1;
+    gRrcr2BoundaryLastFrameTimestampMs = gLastRRCR2TimestampMs;
+    gRrcr2BoundaryRecoveryFrameSent = 0;
+    gRrcr2BoundaryUnexpectedFrameCount = 0;
+    gRrcr2BoundaryFirstUnexpectedFrameTimestampMs = 0.0;
+
+    // 保持IL源关闭，直到手动恢复帧发送。
+    @sysvar::Vehicle_input::Message_MissingTime::RRCR_2_0x4F7 =
+      gRrcr2BoundaryRequestedDurationMs + 1000;
+    @sysvar::Vehicle_input::MSG::RRCR_2_0x4F7 = 1;
+    setTimer(gRrcr2BoundaryRecoveryTimer, gRrcr2BoundaryRequestedDurationMs);
+
+    testStep("总线时间基准",
+             "0x4F7最后正常帧时间戳=%.3f ms；目标丢失=%d ms。",
+             gRrcr2BoundaryLastFrameTimestampMs,
+             gRrcr2BoundaryRequestedDurationMs);
+    TestSupplyTextEvent(gDtcFaultRrcr2InjectionStartedEvent);
+  }
+
+  ObserveDtcCrcFrame(frameData, payloadLength, 9, 0, 0x47);
+  gCounterBoundaryCurrentCounter = this.byte(1);
+  ObserveCounterBoundaryFrame(9);
+  ObserveDtcRecoveryFrame(kDtcRecoverySourceRrcr2,
+    (payloadLength == 8) && DtcFaultGetCrcState(frameData, payloadLength, 0, 0x47));
+}
+// ===== E2E CRC计算与手动恢复帧 =====
+// 手动恢复帧复用此E2E CRC算法，保证恢复帧不额外引入CRC故障。
+byte CalculateRrcr2Crc(byte buffer[])
+{
+  byte checksum;
+  int i;
+  int j;
+
+  checksum = 0x00;
+  for(i = 0; i < 9; i++)
+  {
+    checksum = checksum ^ buffer[i];
+    for(j = 0; j < 8; j++)
+    {
+      if(checksum & 0x80)
+        checksum = (checksum << 1) ^ 0x1D;
+      else
+        checksum = checksum << 1;
+    }
+  }
+
+  return checksum;
+}
+
+// CAN FD DLC转实际数据长度，供CRC字段可用性判断。
+int DtcFaultGetPayloadLength(int dlcVal)
+{
+  if(dlcVal <= 8) return dlcVal;
+  if(dlcVal == 9) return 12;
+  if(dlcVal == 10) return 16;
+  if(dlcVal == 11) return 20;
+  if(dlcVal == 12) return 24;
+  if(dlcVal == 13) return 32;
+  if(dlcVal == 14) return 48;
+  if(dlcVal == 15) return 64;
+  return dlcVal;
+}
+
+// 统一CRC输入范围：DataID两个字节 + CRC字段之外的7个字节。
+byte DtcFaultCalculateSegmentCrc(byte frameData[], int segmentOffset, byte dataId)
+{
+  byte crcData[9];
+  int i;
+
+  crcData[0] = dataId;
+  crcData[1] = 0x00;
+  for(i = 0; i < 7; i++)
+    crcData[i + 2] = frameData[segmentOffset + 1 + i];
+
+  return CalculateRrcr2Crc(crcData);
+}
+
+// 返回1=CRC正确，0=CRC错误，-1=该CRC段数据不完整，不能确认。
+int DtcFaultGetCrcState(byte frameData[], int payloadLength,
+                        int segmentOffset, byte dataId)
+{
+  if(payloadLength < (segmentOffset + 8))
+    return -1;
+
+  if(frameData[segmentOffset] ==
+     DtcFaultCalculateSegmentCrc(frameData, segmentOffset, dataId))
+    return 1;
+
+  return 0;
+}
+
+void ObserveDtcCrcFrame(byte frameData[], int payloadLength, int crcSource,
+                        int segmentOffset, byte dataId)
+{
+  int crcState;
+
+  crcState = DtcFaultGetCrcState(frameData, payloadLength,
+                                 segmentOffset, dataId);
+  if(crcState >= 0)
+    ObserveCrcBoundaryFrame(crcSource, crcState);
+}
+// 0x4F7丢失窗口到期后仅发送一帧正确恢复帧：COUNT递增、CRC重算，
+// 然后把IL计数器同步到该COUNT，防止下一帧计数跳变。
+void SendRrcr2BoundaryRecoveryFrame()
+{
+  int i;
+  int nextCounter;
+  byte crcData[9];
+
+  gRrcr2BoundaryRecoveryFrame = gLastRRCR2;
+  gRrcr2BoundaryRecoveryFrame.dlc = 8;
+  nextCounter = (gRrcr2BoundaryRecoveryFrame.byte(1) & 0x0F) + 1;
+  if(nextCounter > 14)
+    nextCounter = 0;
+  gRrcr2BoundaryRecoveryFrame.byte(1) =
+    (gRrcr2BoundaryRecoveryFrame.byte(1) & 0xF0) | nextCounter;
+
+  crcData[0] = 0x47;
+  crcData[1] = 0x00;
+  for(i = 1; i < 8; i++)
+    crcData[i + 1] = gRrcr2BoundaryRecoveryFrame.byte(i);
+  gRrcr2BoundaryRecoveryFrame.byte(0) = CalculateRrcr2Crc(crcData);
+
+  gRrcr2BoundaryRecoveryTimestampMs = timeNowFloat() / 100.0;
+  gRrcr2BoundaryRecoveryFrameSent = 1;
+  gRrcr2BoundaryInjectionActive = 0;
+  output(gRrcr2BoundaryRecoveryFrame);
+
+  // 将IL的下一帧计数器同步到手动恢复帧，避免恢复后COUNT跳变。
+  $CAN1::CGW::RRCR_2::RRCR_2_RollgCntr1 = nextCounter;
+  @sysvar::Vehicle_input::MSG::RRCR_2_0x4F7 = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::RRCR_2_0x4F7 = 0;
+  TestSupplyTextEvent(gDtcFaultRrcr2RecoverySentEvent);
+}
+
+// 该定时器从最后一帧正常0x4F7开始计时，到期即发送恢复帧。
+on timer gRrcr2BoundaryRecoveryTimer
+{
+  if(gRrcr2BoundaryInjectionActive && gLastRRCR2Valid)
+    SendRrcr2BoundaryRecoveryFrame();
+}
+
+// 用例退出或异常时统一取消0x4F7定时器并恢复IL发送控制，避免影响下一条用例。
+void ResetRrcr2BoundaryTiming()
+{
+  cancelTimer(gRrcr2BoundaryRecoveryTimer);
+  gRrcr2BoundaryArm = 0;
+  gRrcr2BoundaryInjectionActive = 0;
+  gRrcr2BoundaryRecoveryFrameSent = 0;
+  gRrcr2BoundaryRequestedDurationMs = 0;
+  gRrcr2BoundaryUnexpectedFrameCount = 0;
+  gRrcr2BoundaryFirstUnexpectedFrameTimestampMs = 0.0;
+  @sysvar::Vehicle_input::MSG::RRCR_2_0x4F7 = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::RRCR_2_0x4F7 = 0;
+}
+
+// Alive Counter有效范围为0~14，达到14后回绕到0。
+int GetNextAliveCounter(byte counterByte)
+{
+  int nextCounter;
+
+  nextCounter = (counterByte & 0x0F) + 1;
+  if(nextCounter > 14)
+    nextCounter = 0;
+  return nextCounter;
+}
+void SetE2eCrcForOnebox1Recovery()
+{
+  int i;
+  byte crcData[9];
+
+  crcData[0] = 0x49;
+  crcData[1] = 0x00;
+  for(i = 1; i < 8; i++)
+    crcData[i + 1] = gCommunicationLossRecoveryOnebox1.byte(i);
+  gCommunicationLossRecoveryOnebox1.byte(0) = CalculateRrcr2Crc(crcData);
+
+  crcData[0] = 0x4A;
+  crcData[1] = 0x00;
+  for(i = 1; i < 8; i++)
+    crcData[i + 1] = gCommunicationLossRecoveryOnebox1.byte(i + 8);
+  gCommunicationLossRecoveryOnebox1.byte(8) = CalculateRrcr2Crc(crcData);
+}
+
+void SetE2eCrcForSas1Recovery()
+{
+  int i;
+  byte crcData[9];
+
+  crcData[0] = 0x35;
+  crcData[1] = 0x00;
+  for(i = 1; i < 8; i++)
+    crcData[i + 1] = gCommunicationLossRecoverySas1.byte(i);
+  gCommunicationLossRecoverySas1.byte(0) = CalculateRrcr2Crc(crcData);
+}
+
+void SetE2eCrcForAcu3Recovery()
+{
+  int i;
+  byte crcData[9];
+
+  crcData[0] = 0x02;
+  crcData[1] = 0x00;
+  for(i = 1; i < 8; i++)
+    crcData[i + 1] = gCommunicationLossRecoveryAcu3.byte(i);
+  gCommunicationLossRecoveryAcu3.byte(0) = CalculateRrcr2Crc(crcData);
+}
+
+void SetE2eCrcForFlzcu1Recovery()
+{
+  int i;
+  byte crcData[9];
+
+  crcData[0] = 0x36;
+  crcData[1] = 0x00;
+  for(i = 1; i < 8; i++)
+    crcData[i + 1] = gCommunicationLossRecoveryFlzcu1.byte(i);
+  gCommunicationLossRecoveryFlzcu1.byte(0) = CalculateRrcr2Crc(crcData);
+}
+
+// ===== 通讯丢失阈值：以最后一帧正常报文为时间零点，到点发送一帧正确恢复报文 =====
+int HasCommunicationLossBoundarySourceFrame(int faultSource)
+{
+  if(faultSource == 0)
+    return gLastOnebox1Valid;
+  if(faultSource == 1)
+    return gLastSas1Valid;
+  if(faultSource == 2)
+    return gLastAcu3Valid;
+  if(faultSource == 4)
+    return gLastIccCom8Valid;
+  if(faultSource == 5)
+    return gLastFlzcu1Valid;
+
+  if(faultSource == 6)
+    return gLastVcuCom10Valid;
+
+  return 0;
+}
+
+void ResetCommunicationLossBoundarySourceFrame(int faultSource)
+{
+  if(faultSource == 0)
+    gLastOnebox1Valid = 0;
+  else if(faultSource == 1)
+    gLastSas1Valid = 0;
+  else if(faultSource == 2)
+    gLastAcu3Valid = 0;
+  else if(faultSource == 4)
+    gLastIccCom8Valid = 0;
+  else if(faultSource == 5)
+    gLastFlzcu1Valid = 0;
+  else if(faultSource == 6)
+    gLastVcuCom10Valid = 0;
+}
+
+// 通讯丢失通过关闭对应仿真源实现；durationMs 比目标丢失时间多预留1秒，
+// 防止IL自动恢复报文早于脚本发送的恢复帧。
+int SetCommunicationLossBoundaryFault(int faultSource, int enabled, int durationMs)
+{
+  if(faultSource == 0)
+  {
+    @sysvar::Vehicle_input::Message_MissingTime::ONEBOX_1_0x98 = durationMs;
+    @sysvar::Vehicle_input::MSG::ONEBOX_1_0x98 = enabled;
+  }
+  else if(faultSource == 1)
+  {
+    @sysvar::Vehicle_input::Message_MissingTime::SAS_1_0x132 = durationMs;
+    @sysvar::Vehicle_input::MSG::SAS_1_0x132 = enabled;
+  }
+  else if(faultSource == 2)
+  {
+    @sysvar::Vehicle_input::Message_MissingTime::ACU_3_0x021 = durationMs;
+    @sysvar::Vehicle_input::MSG::ACU_3_0x021 = enabled;
+  }
+  else if(faultSource == 4)
+  {
+    @sysvar::Vehicle_input::Message_MissingTime::ICC_COM_8_0x510 = durationMs;
+    @sysvar::Vehicle_input::MSG::ICC_COM_8_0x510 = enabled;
+  }
+  else if(faultSource == 5)
+  {
+    @sysvar::Vehicle_input::Message_MissingTime::FLZCU_1_0x23B = durationMs;
+    @sysvar::Vehicle_input::MSG::FLZCU_1_0x23B = enabled;
+  }
+  else if(faultSource == 6)
+  {
+    @sysvar::Vehicle_input::Message_MissingTime::VCU_COM_10_0x38 = durationMs;
+    @sysvar::Vehicle_input::MSG::VCU_COM_10_0x38 = enabled;
+  }
+  else
+  {
+    return 0;
+  }
+
+  return 1;
+}
+
+// 收到正常报文后请求停发；若仍收到后续帧，则从最后实际收到帧重新计算丢失时间。
+void TryStartCommunicationLossBoundary(int faultSource)
+{
+  char messageId[8];
+
+  if((!gCommunicationLossBoundaryArm) ||
+     (gCommunicationLossBoundarySource != faultSource))
+    return;
+
+  gCommunicationLossBoundaryArm = 0;
+  gCommunicationLossBoundaryInjectionActive = 1;
+  gCommunicationLossBoundaryRecoveryFrameSent = 0;
+  gCommunicationLossBoundaryUnexpectedFrameCount = 0;
+  gCommunicationLossBoundaryFirstUnexpectedFrameTimestampMs = 0.0;
+  gCommunicationLossBoundaryLastFrameTimestampMs = timeNowFloat() / 100.0;
+  SetCommunicationLossBoundaryFault(faultSource, 1,
+                                    gCommunicationLossBoundaryRequestedDurationMs + 1000);
+  setTimer(gCommunicationLossRecoveryTimer,
+           gCommunicationLossBoundaryRequestedDurationMs);
+
+  if(faultSource == 0)
+    snprintf(messageId, elcount(messageId), "0x098");
+  else if(faultSource == 1)
+    snprintf(messageId, elcount(messageId), "0x132");
+  else if(faultSource == 2)
+    snprintf(messageId, elcount(messageId), "0x021");
+  else if(faultSource == 4)
+    snprintf(messageId, elcount(messageId), "0x510");
+  else if(faultSource == 5)
+    snprintf(messageId, elcount(messageId), "0x23B");
+  else
+    snprintf(messageId, elcount(messageId), "0x038");
+
+  testStep("总线时间基准",
+           "%s最后正常帧时间戳=%.3f ms；目标丢失=%d ms。",
+           messageId,
+           gCommunicationLossBoundaryLastFrameTimestampMs,
+           gCommunicationLossBoundaryRequestedDurationMs);
+  TestSupplyTextEvent(gDtcFaultCommLossInjectionStartedEvent);
+}
+
+// 目标丢失时间到达后，手动发送一帧计数器和CRC正确的恢复帧，
+// 再恢复仿真源，避免恢复首帧被判为新的CRC或COUNT故障。
+void SendCommunicationLossBoundaryRecoveryFrame()
+{
+  int nextCounter1;
+  int nextCounter2;
+
+  gCommunicationLossBoundaryRecoveryTimestampMs = timeNowFloat() / 100.0;
+  gCommunicationLossBoundaryInjectionActive = 0;
+  if(gCommunicationLossBoundarySource == 0)
+  {
+    gCommunicationLossRecoveryOnebox1 = gLastOnebox1;
+    // Keep the received CAN FD DLC (12 for a 24-byte payload).
+    nextCounter1 = GetNextAliveCounter(gCommunicationLossRecoveryOnebox1.byte(1));
+    nextCounter2 = GetNextAliveCounter(gCommunicationLossRecoveryOnebox1.byte(9));
+    gCommunicationLossRecoveryOnebox1.byte(1) =
+      (gCommunicationLossRecoveryOnebox1.byte(1) & 0xF0) | nextCounter1;
+    gCommunicationLossRecoveryOnebox1.byte(9) =
+      (gCommunicationLossRecoveryOnebox1.byte(9) & 0xF0) | nextCounter2;
+    SetE2eCrcForOnebox1Recovery();
+    output(gCommunicationLossRecoveryOnebox1);
+    $CAN1::CGW::ONEBOX_1::ONEBOX_1_RollgCntr1 = nextCounter1;
+    $CAN1::CGW::ONEBOX_1::ONEBOX_1_RollgCntr2 = nextCounter2;
+  }
+  else if(gCommunicationLossBoundarySource == 1)
+  {
+    gCommunicationLossRecoverySas1 = gLastSas1;
+    gCommunicationLossRecoverySas1.dlc = 8;
+    nextCounter1 = GetNextAliveCounter(gCommunicationLossRecoverySas1.byte(1));
+    gCommunicationLossRecoverySas1.byte(1) =
+      (gCommunicationLossRecoverySas1.byte(1) & 0xF0) | nextCounter1;
+    SetE2eCrcForSas1Recovery();
+    output(gCommunicationLossRecoverySas1);
+    $CAN1::CGW::SAS_1::SAM_1_RollgCntr = nextCounter1;
+  }
+  else if(gCommunicationLossBoundarySource == 2)
+  {
+    gCommunicationLossRecoveryAcu3 = gLastAcu3;
+    gCommunicationLossRecoveryAcu3.dlc = 8;
+    nextCounter1 = GetNextAliveCounter(gCommunicationLossRecoveryAcu3.byte(1));
+    gCommunicationLossRecoveryAcu3.byte(1) =
+      (gCommunicationLossRecoveryAcu3.byte(1) & 0xF0) | nextCounter1;
+    SetE2eCrcForAcu3Recovery();
+    output(gCommunicationLossRecoveryAcu3);
+    $CAN1::CGW::ACU_3::ACU_3_RollgCntr1 = nextCounter1;
+  }
+  else if(gCommunicationLossBoundarySource == 4)
+  {
+    gCommunicationLossRecoveryIccCom8 = gLastIccCom8;
+    gCommunicationLossRecoveryIccCom8.dlc = 8;
+    output(gCommunicationLossRecoveryIccCom8);
+  }
+  else if(gCommunicationLossBoundarySource == 5)
+  {
+    gCommunicationLossRecoveryFlzcu1 = gLastFlzcu1;
+    gCommunicationLossRecoveryFlzcu1.dlc = 8;
+    nextCounter1 = GetNextAliveCounter(gCommunicationLossRecoveryFlzcu1.byte(1));
+    gCommunicationLossRecoveryFlzcu1.byte(1) =
+      (gCommunicationLossRecoveryFlzcu1.byte(1) & 0xF0) | nextCounter1;
+    SetE2eCrcForFlzcu1Recovery();
+    output(gCommunicationLossRecoveryFlzcu1);
+    $CAN1::CGW::FLZCU_1::FLZCU_1_RollgCntr = nextCounter1;
+  }
+
+  else if(gCommunicationLossBoundarySource == 6)
+  {
+    gCommunicationLossRecoveryVcuCom10 = gLastVcuCom10;
+    nextCounter1 = GetNextAliveCounter(gCommunicationLossRecoveryVcuCom10.byte(1));
+    gCommunicationLossRecoveryVcuCom10.byte(1) =
+      (gCommunicationLossRecoveryVcuCom10.byte(1) & 0xF0) | nextCounter1;
+    SetE2eCrcForVcuCom10Recovery();
+    output(gCommunicationLossRecoveryVcuCom10);
+    $CAN1::CGW::VCU_COM_10::VCU_10_RollgCntr = nextCounter1;
+  }
+
+  SetCommunicationLossBoundaryFault(gCommunicationLossBoundarySource, 0, 0);
+  gCommunicationLossBoundaryRecoveryFrameSent = 1;
+  TestSupplyTextEvent(gDtcFaultCommLossRecoverySentEvent);
+}
+
+on timer gCommunicationLossRecoveryTimer
+{
+  if(gCommunicationLossBoundaryInjectionActive &&
+     HasCommunicationLossBoundarySourceFrame(gCommunicationLossBoundarySource))
+    SendCommunicationLossBoundaryRecoveryFrame();
+}
+
+void ResetCommunicationLossBoundaryTiming()
+{
+  cancelTimer(gCommunicationLossRecoveryTimer);
+  if((gCommunicationLossBoundarySource >= 0) &&
+     (gCommunicationLossBoundarySource != 3))
+    SetCommunicationLossBoundaryFault(gCommunicationLossBoundarySource, 0, 0);
+
+  gCommunicationLossBoundaryArm = 0;
+  gCommunicationLossBoundaryInjectionActive = 0;
+  gCommunicationLossBoundaryRecoveryFrameSent = 0;
+  gCommunicationLossBoundarySource = -1;
+  gCommunicationLossBoundaryRequestedDurationMs = 0;
+  gCommunicationLossBoundaryUnexpectedFrameCount = 0;
+  gCommunicationLossBoundaryFirstUnexpectedFrameTimestampMs = 0.0;
+}
+
+long SetDlcFaultMessageLength(int messageId)
+{
+  if(messageId == 0x23B)
+    return TestSetMsgDlc(FL_DA_CANFD_RLCR::FLZCU_1,
+                                     kDtcDlcFaultValue);
+  if(messageId == 0x49D)
+    return TestSetMsgDlc(FL_DA_CANFD_RLCR::FLZCU_9,
+                                     kDtcDlcFaultValue);
+  if(messageId == 0x2AB)
+    return TestSetMsgDlc(FL_DA_CANFD_RLCR::FRZCU_1,
+                                     kDtcDlcFaultValue);
+  if(messageId == 0x2BB)
+    return TestSetMsgDlc(FL_DA_CANFD_RLCR::RZCU_2,
+                                     kDtcDlcFaultValue);
+  if(messageId == 0x098)
+    return TestSetMsgDlc(FL_DA_CANFD_RLCR::ONEBOX_1,
+                                     kDtcDlcFaultValue);
+  if(messageId == 0x22B)
+    return TestSetMsgDlc(FL_DA_CANFD_RLCR::ONEBOX_3,
+                                     kDtcDlcFaultValue);
+  if(messageId == 0x132)
+    return TestSetMsgDlc(FL_DA_CANFD_RLCR::SAS_1,
+                                     kDtcDlcFaultValue);
+  if(messageId == 0x031)
+    return TestSetMsgDlc(FL_DA_CANFD_RLCR::ACU_2,
+                                     kDtcDlcFaultValue);
+  if(messageId == 0x021)
+    return TestSetMsgDlc(FL_DA_CANFD_RLCR::ACU_3,
+                                     kDtcDlcFaultValue);
+  if(messageId == 0x4F7)
+    return TestSetMsgDlc(FL_DA_CANFD_RLCR::RRCR_2,
+                                     kDtcDlcFaultValue);
+  if(messageId == 0x038)
+    return TestSetMsgDlc(FL_DA_CANFD_RLCR::VCU_COM_10,
+                                     kDtcDlcFaultValue);
+
+  return -100;
+}
+
+long ResetDlcFaultMessageLength(int messageId)
+{
+  if(messageId == 0x23B)
+    return TestResetMsgDlc(FL_DA_CANFD_RLCR::FLZCU_1);
+  if(messageId == 0x49D)
+    return TestResetMsgDlc(FL_DA_CANFD_RLCR::FLZCU_9);
+  if(messageId == 0x2AB)
+    return TestResetMsgDlc(FL_DA_CANFD_RLCR::FRZCU_1);
+  if(messageId == 0x2BB)
+    return TestResetMsgDlc(FL_DA_CANFD_RLCR::RZCU_2);
+  if(messageId == 0x098)
+    return TestResetMsgDlc(FL_DA_CANFD_RLCR::ONEBOX_1);
+  if(messageId == 0x22B)
+    return TestResetMsgDlc(FL_DA_CANFD_RLCR::ONEBOX_3);
+  if(messageId == 0x132)
+    return TestResetMsgDlc(FL_DA_CANFD_RLCR::SAS_1);
+  if(messageId == 0x031)
+    return TestResetMsgDlc(FL_DA_CANFD_RLCR::ACU_2);
+  if(messageId == 0x021)
+    return TestResetMsgDlc(FL_DA_CANFD_RLCR::ACU_3);
+  if(messageId == 0x4F7)
+    return TestResetMsgDlc(FL_DA_CANFD_RLCR::RRCR_2);
+  if(messageId == 0x038)
+    return TestResetMsgDlc(FL_DA_CANFD_RLCR::VCU_COM_10);
+
+  return -100;
+}
+
+void ResetDlcFaultFrameSequence()
+{
+  int retry;
+  long resetResult;
+
+  gDlcFaultFrameSequenceActive = 0;
+  resetResult = 0;
+  if(gDlcFaultFrameSequenceMessageId != 0)
+  {
+    resetResult = ResetDlcFaultMessageLength(
+      gDlcFaultFrameSequenceMessageId);
+    for(retry = 0; (resetResult == -1) && (retry < 10); retry++)
+    {
+      testWaitForTimeout(1);
+      resetResult = ResetDlcFaultMessageLength(
+        gDlcFaultFrameSequenceMessageId);
+    }
+  }
+
+  gDlcFaultFrameSequenceResetResult = resetResult;
+  if(resetResult == 0)
+    gDlcFaultFrameSequenceMessageId = 0;
+  gDlcFaultFrameSequenceObservedCount = 0;
+  gDlcFaultFrameSequenceComplete = 0;
+}
+
+void ObserveDlcFaultFrame(int messageId, int receivedDlc)
+{
+  if((!gDlcFaultFrameSequenceActive) ||
+     (gDlcFaultFrameSequenceMessageId != messageId) ||
+     (receivedDlc != kDtcDlcFaultValue))
+    return;
+
+  gDlcFaultFrameSequenceObservedCount++;
+  if(gDlcFaultFrameSequenceObservedCount < kDtcInvalidFrameCount)
+    return;
+
+  gDtcFaultFrameCompletionTimestampMs = timeNowFloat() / 100.0;
+  gDtcFaultFrameCompletionReady = 1;
+
+  gDlcFaultFrameSequenceActive = 0;
+  gDlcFaultFrameSequenceResetResult =
+    ResetDlcFaultMessageLength(messageId);
+  gDlcFaultFrameSequenceComplete =
+    (gDlcFaultFrameSequenceResetResult == 0);
+  TestSupplyTextEvent(gDtcFaultDlcFrameSequenceCompleteEvent);
+}
+
+int StartDlcFaultFrameSequence(int messageId)
+{
+  long setResult;
+
+  ResetDlcFaultFrameSequence();
+  if(gDlcFaultFrameSequenceResetResult != 0)
+  {
+    testStepFail("DLC故障清理",
+                 "上一条DLC故障的原始DLC恢复失败，结果=%ld。",
+                 gDlcFaultFrameSequenceResetResult);
+    return 0;
+  }
+
+  gDlcFaultFrameSequenceMessageId = messageId;
+  gDlcFaultFrameSequenceObservedCount = 0;
+  gDlcFaultFrameSequenceComplete = 0;
+  gDtcFaultFrameCompletionTimestampMs = 0.0;
+  gDtcFaultFrameCompletionReady = 0;
+  gDlcFaultFrameSequenceActive = 1;
+  setResult = SetDlcFaultMessageLength(messageId);
+  if(setResult != 0)
+  {
+    gDlcFaultFrameSequenceActive = 0;
+    ResetDlcFaultFrameSequence();
+    testStepFail("DLC故障注入",
+                 "报文0x%03X的DLC覆盖失败，结果=%ld。",
+                 messageId, setResult);
+    return 0;
+  }
+
+  return 1;
+}
+
+int WaitForDlcFaultFrameSequence(int cycleMs, char messageName[])
+{
+  int retry;
+  int timeoutMs;
+  int observedCount;
+
+  timeoutMs = (cycleMs * (kDtcInvalidFrameCount + 2)) + 100;
+  if(!gDlcFaultFrameSequenceComplete)
+    testWaitForTextEvent(gDtcFaultDlcFrameSequenceCompleteEvent, timeoutMs);
+
+  if(gDlcFaultFrameSequenceObservedCount < kDtcInvalidFrameCount)
+  {
+    observedCount = gDlcFaultFrameSequenceObservedCount;
+    gDlcFaultFrameSequenceActive = 0;
+    ResetDlcFaultFrameSequence();
+    if(gDlcFaultFrameSequenceResetResult != 0)
+      testStepFail("DLC故障恢复", "%s超时后恢复原DLC失败，结果=%ld。",
+                   messageName, gDlcFaultFrameSequenceResetResult);
+    testStepFail("DLC故障注入",
+                 "%s在%d ms内仅收到%d/%d帧DLC=7报文。",
+                 messageName, timeoutMs, observedCount,
+                 kDtcInvalidFrameCount);
+    return 0;
+  }
+
+  for(retry = 0; (gDlcFaultFrameSequenceResetResult == -1) &&
+                 (retry < 10); retry++)
+  {
+    testWaitForTimeout(1);
+    gDlcFaultFrameSequenceResetResult =
+      ResetDlcFaultMessageLength(gDlcFaultFrameSequenceMessageId);
+  }
+  if(gDlcFaultFrameSequenceResetResult != 0)
+  {
+    testStepFail("DLC故障注入",
+                 "%s已收到10帧DLC=7报文，但恢复原DLC失败，结果=%ld。",
+                 messageName, gDlcFaultFrameSequenceResetResult);
+    return 0;
+  }
+
+  gDlcFaultFrameSequenceComplete = 1;
+  testStepPass("故障注入", "%s已按原周期收到10帧DLC=7报文。",
+               messageName);
+  return 1;
+}
+
+// ===== 诊断请求、原始报文准备与用例清理 =====
+// 统一把诊断服务返回值转换为测试步骤结果，避免各用例重复处理。
+void ReportDiagResult(char stepName[], enum DiagResult actualResult)
+{
+  if(actualResult == DiagOK)
+  {
+    testStepPass(stepName, "诊断响应为肯定响应。");
+  }
+  else
+  {
+    testStepFail(stepName, "诊断请求失败，结果=%d。", actualResult);
+  }
+}
+
+enum DiagResult EnterDefaultSession(enum AddressMode addressMode)
+{
+  enum DiagResult result;
+
+  result = Service10_SessionControl(addressMode, DefaultSession, SuppressBitOff);
+  ReportDiagResult("进入默认会话", result);
+  return result;
+}
+
+enum DiagResult EnterExtendedSession(enum AddressMode addressMode)
+{
+  enum DiagResult result;
+
+  result = Service10_SessionControl(addressMode, ExtendedSession, SuppressBitOff);
+  ReportDiagResult("进入扩展会话", result);
+  return result;
+}
+
+int HexNibble(char character)
+{
+  if((character >= '0') && (character <= '9'))
+    return character - '0';
+
+  if((character >= 'A') && (character <= 'F'))
+    return character - 'A' + 10;
+
+  if((character >= 'a') && (character <= 'f'))
+    return character - 'a' + 10;
+
+  return -1;
+}
+
+// 将手工UDS用例的十六进制字符串解析为字节；掩码数组用于支持通配匹配。
+int DecodeHexBytes(char hexText[], byte bytes[], byte masks[])
+{
+  int textIndex;
+  int byteCount;
+  int highNibble;
+  int lowNibble;
+
+  textIndex = 0;
+  byteCount = 0;
+
+  while(hexText[textIndex] != 0)
+  {
+    while((hexText[textIndex] == ' ') || (hexText[textIndex] == '\t'))
+      textIndex++;
+
+    if(hexText[textIndex] == 0)
+      break;
+
+    if((hexText[textIndex] == 'x') || (hexText[textIndex] == 'X'))
+    {
+      if((hexText[textIndex + 1] != 'x') && (hexText[textIndex + 1] != 'X'))
+        return -1;
+
+      bytes[byteCount] = 0;
+      masks[byteCount] = 0;
+      byteCount++;
+      textIndex += 2;
+      continue;
+    }
+
+    highNibble = HexNibble(hexText[textIndex]);
+    lowNibble = HexNibble(hexText[textIndex + 1]);
+    if((highNibble < 0) || (lowNibble < 0))
+      return -1;
+
+    bytes[byteCount] = (highNibble << 4) | lowNibble;
+    masks[byteCount] = 0xFF;
+    byteCount++;
+    textIndex += 2;
+  }
+
+  return byteCount;
+}
+
+
+
+
+
+// 0x27解锁：读取Seed后调用工程DLL计算Key，再发送Key请求，不在脚本中固化算法。
+enum DiagResult UnlockWithProjectDll(byte seedSubFunction, dword dllSecurityLevel)
+{
+  byte seed[64];
+  byte keyBytes[64];
+  byte index;
+  dword keyLength;
+  int seedLength;
+  char variant[1];
+  char option[1];
+  enum DiagResult result;
+
+  variant[0] = 0;
+  option[0] = 0;
+  diagSetTarget("T1V_G_RLCR");
+  result = Service27_SecurityAccessSeed(PhysicalAddress, seedSubFunction, seed, elcount(seed));
+  if(result != DiagOK)
+    return result;
+
+  seedLength = DiagRxDataLen - 2;
+  if((seedLength <= 0) || (seedLength > elcount(seed)))
+  {
+    testStepFail("安全访问种子", "种子长度无效：%d。", seedLength);
+    return DiagGeneralError;
+  }
+
+  for(index = 0; index < seedLength; index++)
+    seed[index] = DiagRxData[index + 2];
+
+  keyLength = 0;
+  DiagGenerateKeyFromSeed(seed, seedLength, dllSecurityLevel, variant, option,
+                          keyBytes, elcount(keyBytes), keyLength);
+  if((keyLength <= 0) || (keyLength > elcount(keyBytes)))
+  {
+    testStepFail("安全访问密钥", "DLL未返回有效密钥，长度=%d。", keyLength);
+    return DiagGeneralError;
+  }
+
+  return Service27_SecurityAccessKey(PhysicalAddress, seedSubFunction, keyBytes, keyLength);
+}
+
+// 每个DTC用例前后都调用：取消延迟定时器、关闭所有故障开关、恢复正常报文和有效信号，
+// 防止上一条用例的故障残留影响下一条用例。
+void RestoreAllDtcMessageSources()
+{
+  ResetDlcFaultFrameSequence();
+  gDtcRecoveryFrameMonitorActive = 0;
+  gDtcRecoveryFrameSource = 0;
+  gDtcRecoveryFrameCount = 0;
+  gDtcRecoveryFrameTargetCount = 0;
+  gDtcPostFaultRecoveryMonitorStarted = 0;
+  gDtcStartRecoveryOnFinalResponse = 0;
+  gDtcSkipReadResponseJudgeDelay = 0;
+  gDtcFaultStatusAllowPendingStatus = 0;
+  gDtcSignalInvalidFrameMonitorActive = 0;
+  gDtcSignalInvalidFrameSource = 0;
+  gDtcSignalInvalidCriterion = 0;
+  gDtcSignalInvalidFrameCount = 0;
+  gCrcBoundaryActive = 0;
+  gCrcBoundaryInjectionStarted = 0;
+  gCrcBoundaryComplete = 0;
+  gCrcBoundaryUnexpectedValidFrameCount = 0;
+  gCounterBoundaryActive = 0;
+  gCounterBoundaryBaselineActive = 0;
+  gCounterBoundaryCounterValueValid = 0;
+  gCounterBoundarySource = 0;
+  gCounterBoundaryTargetCycles = 0;
+  gCounterBoundaryObservedCycles = 0;
+  gCounterBoundaryComplete = 0;
+  gCounterBoundaryFirstFrameTimestampMs = 0.0;
+  gCounterBoundaryCurrentCounter = 0;
+  gCounterBoundaryFirstCounter = 0;
+  gCounterBoundaryUnexpectedChangedFrameCount = 0;
+  @sysvar::Vehicle_input::Message_Counter::Counter_unchange = 0;
+  ResetRrcr2BoundaryTiming();
+  ResetCommunicationLossBoundaryTiming();
+
+  // 恢复所有DTC相关报文的IL周期发送。
+  @sysvar::Vehicle_input::Message_MissingTime::ONEBOX_1_0x98 = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::ONEBOX_3_0x22B = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::SAS_1_0x132 = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::ACU_2_0x31 = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::ACU_3_0x021 = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::FLZCU_1_0x23B = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::FLZCU_9_0x49D = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::FRZCU_1_0x2AB = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::RZCU_2_0x2BB = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::RRCR_2_0x4F7 = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::ICC_COM_8_0x510 = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::VCU_COM_10_0x38 = 0;
+  @sysvar::Vehicle_input::MSG::ONEBOX_1_0x98 = 0;
+  @sysvar::Vehicle_input::MSG::ONEBOX_3_0x22B = 0;
+  @sysvar::Vehicle_input::MSG::SAS_1_0x132 = 0;
+  @sysvar::Vehicle_input::MSG::ACU_2_0x31 = 0;
+  @sysvar::Vehicle_input::MSG::ACU_3_0x021 = 0;
+  @sysvar::Vehicle_input::MSG::FLZCU_1_0x23B = 0;
+  @sysvar::Vehicle_input::MSG::FLZCU_9_0x49D = 0;
+  @sysvar::Vehicle_input::MSG::FRZCU_1_0x2AB = 0;
+  @sysvar::Vehicle_input::MSG::RZCU_2_0x2BB = 0;
+  @sysvar::Vehicle_input::MSG::RRCR_2_0x4F7 = 0;
+  @sysvar::Vehicle_input::MSG::ICC_COM_8_0x510 = 0;
+  @sysvar::Vehicle_input::MSG::VCU_COM_10_0x38 = 0;
+
+  // 清除所有关联报文的CRC和COUNT故障控制。
+  @sysvar::Vehicle_input::Message_CRC::CRC_unchange = 0;
+  @sysvar::Vehicle_input::Message_CRC::ONEBOX_1_0x98_CRC1 = 0;
+  @sysvar::Vehicle_input::Message_CRC::ONEBOX_1_0x98_CRC2 = 0;
+  @sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC1 = 0;
+  @sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC2 = 0;
+  @sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC4 = 0;
+  @sysvar::Vehicle_input::Message_CRC::SAS_1_0x132 = 0;
+  @sysvar::Vehicle_input::Message_CRC::ACU_2_0x31 = 0;
+  @sysvar::Vehicle_input::Message_CRC::ACU_3_0x021 = 0;
+  @sysvar::Vehicle_input::Message_CRC::FLZCU_1_0x23B = 0;
+  @sysvar::Vehicle_input::Message_CRC::FRZCU_1_0x2AB = 0;
+  @sysvar::Vehicle_input::Message_CRC::RZCU_2_0x2BB = 0;
+  @sysvar::Vehicle_input::Message_CRC::RRCR_2_0x4F7 = 0;
+  @sysvar::Vehicle_input::Message_CRC::VCU_COM_10_0x38 = 0;
+  @sysvar::Vehicle_input::Message_Counter::ONEBOX_1_0x98_RC1 = 0;
+  @sysvar::Vehicle_input::Message_Counter::ONEBOX_1_0x98_RC2 = 0;
+  @sysvar::Vehicle_input::Message_Counter::ONEBOX_3_0x22B_RC1 = 0;
+  @sysvar::Vehicle_input::Message_Counter::ONEBOX_3_0x22B_RC2 = 0;
+  @sysvar::Vehicle_input::Message_Counter::ONEBOX_3_0x22B_RC4 = 0;
+  @sysvar::Vehicle_input::Message_Counter::SAS_1_0x132 = 0;
+  @sysvar::Vehicle_input::Message_Counter::ACU_2_0x31 = 0;
+  @sysvar::Vehicle_input::Message_Counter::ACU_3_0x021 = 0;
+  @sysvar::Vehicle_input::Message_Counter::FLZCU_1_0x23B = 0;
+  @sysvar::Vehicle_input::Message_Counter::FRZCU_1_0x2AB = 0;
+  @sysvar::Vehicle_input::Message_Counter::RZCU_2_0x2BB = 0;
+  @sysvar::Vehicle_input::Message_Counter::RRCR_2_0x4F7 = 0;
+  @sysvar::Vehicle_input::Message_Counter::VCU_COM_10_0x38 = 0;
+
+  // 将所有信号无效注入值恢复为正常默认值。
+  $CAN1::CGW::ONEBOX_1::ESP1_VehicleSpeedVSOSigValidData = 0;
+  $CAN1::CGW::ONEBOX_1::ABS_ESP_1_VehicleSpeedVSOSig = 0;
+  $CAN1::CGW::ONEBOX_3::VehicleStandstill = 0;
+  $CAN1::CGW::SAS_1::SAM_1_SteeringAngle = 0;
+  $CAN1::CGW::SAS_1::SAM_1_SteeringAngleVD = 0;
+  $CAN1::CGW::SAS_1::SAM_1_SteeringAngleSpeedVD = 0;
+  $CAN1::CGW::ACU_2::ACU_2_LateralAcceleration = 0;
+  $CAN1::CGW::ACU_2::ACU_2_YawRate = 0;
+  $CAN1::CGW::ACU_2::ACU_2_YawrateSigValidData = 0;
+  $CAN1::CGW::ACU_3::ACU_3_LongitudinalAcceleration = 0;
+  $CAN1::CGW::ACU_3::ACU_3_LongitudinalAccelerationVD = 0;
+  $CAN1::CGW::FLZCU_9::FLZCU_9_ArmingSts = 0;
+}
+
+// Restore all DTC-related inputs after every VXT testcase.
+void SetDtcReportDisplayTitle(char displayTitle[])
+{
+  snprintf(gDtcReportDisplayTitle, elcount(gDtcReportDisplayTitle), "%s",
+    displayTitle);
+}
+
+void DtcReportCaseTitle(char defaultTitle[], char defaultDescription[])
+{
+  if(gDtcReportDisplayTitle[0] != 0)
+    testCaseTitle(defaultTitle, gDtcReportDisplayTitle);
+  else
+    testCaseTitle(defaultTitle, defaultDescription);
+}
+void RestoreDtcCaseAfterExecution()
+{
+  RestoreAllDtcMessageSources();
+  gDtcCaseBaselineSource = 0;
+  gDtcReadRecoverySource = 0;
+  gDtcReportDisplayTitle[0] = 0;
+}
+
+// ===== 公共DTC判定与恢复时序 =====
+// 故障窗口结束后读取一次19 02 09，等待300 ms完成首次状态判定；
+// 随后恢复正常报文并确认连续3帧，等待5 ms后再次读取恢复状态。
+int GetDtcRecoveryFrameCycleMs(int recoverySource)
+{
+  if((recoverySource == kDtcRecoverySourceFlzcu1) ||
+     (recoverySource == kDtcRecoverySourceFrzcu1) ||
+     (recoverySource == kDtcRecoverySourceRzcu2) ||
+     (recoverySource == kDtcRecoverySourceOnebox3))
+    return 20;
+
+  if((recoverySource == kDtcRecoverySourceOnebox1) ||
+     (recoverySource == kDtcRecoverySourceSas1) ||
+     (recoverySource == kDtcRecoverySourceAcu2) ||
+     (recoverySource == kDtcRecoverySourceAcu3))
+    return 10;
+
+  if(recoverySource == kDtcRecoverySourceVcuCom10)
+    return 10;
+
+  if((recoverySource == kDtcRecoverySourceRrcr2) ||
+     (recoverySource == kDtcRecoverySourceFlzcu9))
+    return 100;
+
+  if(recoverySource == kDtcRecoverySourceIccCom8)
+    return 500;
+
+  return 0;
+}
+
+void GetDtcRecoveryMessageName(int recoverySource, char messageName[])
+{
+  if(recoverySource == kDtcRecoverySourceFlzcu1)
+    snprintf(messageName, elcount(messageName), "FLZCU_1 (0x23B)");
+  else if(recoverySource == kDtcRecoverySourceFrzcu1)
+    snprintf(messageName, elcount(messageName), "FRZCU_1 (0x2AB)");
+  else if(recoverySource == kDtcRecoverySourceRzcu2)
+    snprintf(messageName, elcount(messageName), "RZCU_2 (0x2BB)");
+  else if(recoverySource == kDtcRecoverySourceOnebox1)
+    snprintf(messageName, elcount(messageName), "ONEBOX_1 (0x098)");
+  else if(recoverySource == kDtcRecoverySourceOnebox3)
+    snprintf(messageName, elcount(messageName), "ONEBOX_3 (0x22B)");
+  else if(recoverySource == kDtcRecoverySourceSas1)
+    snprintf(messageName, elcount(messageName), "SAS_1 (0x132)");
+  else if(recoverySource == kDtcRecoverySourceAcu2)
+    snprintf(messageName, elcount(messageName), "ACU_2 (0x031)");
+  else if(recoverySource == kDtcRecoverySourceAcu3)
+    snprintf(messageName, elcount(messageName), "ACU_3 (0x021)");
+  else if(recoverySource == kDtcRecoverySourceRrcr2)
+    snprintf(messageName, elcount(messageName), "RRCR_2 (0x4F7)");
+  else if(recoverySource == kDtcRecoverySourceIccCom8)
+    snprintf(messageName, elcount(messageName), "ICC_COM_8 (0x510)");
+  else if(recoverySource == kDtcRecoverySourceVcuCom10)
+    snprintf(messageName, elcount(messageName), "VCU_COM_10 (0x038)");
+  else if(recoverySource == kDtcRecoverySourceFlzcu9)
+    snprintf(messageName, elcount(messageName), "FLZCU_9 (0x49D)");
+  else
+    snprintf(messageName, elcount(messageName), "未知来源%d", recoverySource);
+}
+
+int GetDtcRecoverySourceForCommunicationLoss(int faultSource)
+{
+  if(faultSource == 0) return kDtcRecoverySourceOnebox1;
+  if(faultSource == 1) return kDtcRecoverySourceSas1;
+  if(faultSource == 2) return kDtcRecoverySourceAcu3;
+  if(faultSource == 3) return kDtcRecoverySourceRrcr2;
+  if(faultSource == 4) return kDtcRecoverySourceIccCom8;
+  if(faultSource == 5) return kDtcRecoverySourceFlzcu1;
+  if(faultSource == 6) return kDtcRecoverySourceVcuCom10;
+  return 0;
+}
+
+int GetDtcRecoverySourceForLeftZone(int source)
+{
+  if(source == 1) return kDtcRecoverySourceFlzcu1;
+  if(source == 2) return kDtcRecoverySourceFlzcu9;
+  if(source == 3) return kDtcRecoverySourceFrzcu1;
+  if(source == 4) return kDtcRecoverySourceRzcu2;
+  return 0;
+}
+
+int GetDtcRecoverySourceForOnebox(int source)
+{
+  if((source == 1) || (source == 3)) return kDtcRecoverySourceOnebox1;
+  if((source == 2) || (source == 4) || (source == 5))
+    return kDtcRecoverySourceOnebox3;
+  return 0;
+}
+
+int GetDtcRecoverySourceForAcu(int source)
+{
+  if(source == 1) return kDtcRecoverySourceAcu2;
+  if(source == 2) return kDtcRecoverySourceAcu3;
+  return 0;
+}
+
+// Map legacy ONEBOX testcase source values to the shared CRC boundary sources.
+int GetOneboxCrcBoundarySource(int source)
+{
+  if(source == 1)
+    return 4;
+  if(source == 2)
+    return 5;
+  if(source == 3)
+    return 10;
+  if(source == 4)
+    return 11;
+  if(source == 5)
+    return 12;
+
+  return 0;
+}
+// Map legacy ONEBOX testcase source values to the shared COUNT boundary sources.
+int GetOneboxCounterBoundarySource(int source)
+{
+  if(source == 1)
+    return 4;
+  if(source == 2)
+    return 5;
+
+  return 0;
+}
+int GetDtcRecoverySourceForCrc(int source)
+{
+  if(source == 1) return kDtcRecoverySourceFlzcu1;
+  if(source == 2) return kDtcRecoverySourceFrzcu1;
+  if(source == 3) return kDtcRecoverySourceRzcu2;
+  if((source == 4) || (source == 10)) return kDtcRecoverySourceOnebox1;
+  if((source == 5) || (source == 11) || (source == 12)) return kDtcRecoverySourceOnebox3;
+  if(source == 6) return kDtcRecoverySourceSas1;
+  if(source == 7) return kDtcRecoverySourceAcu2;
+  if(source == 8) return kDtcRecoverySourceAcu3;
+  if(source == 9) return kDtcRecoverySourceRrcr2;
+  if(source == 13) return kDtcRecoverySourceVcuCom10;
+  return 0;
+}
+
+int WaitForDtcRecoveryFrames(int recoverySource, int targetFrameCount,
+                             char stepName[])
+{
+  char messageName[64];
+  int cycleMs;
+  int timeoutMs;
+
+  cycleMs = GetDtcRecoveryFrameCycleMs(recoverySource);
+  GetDtcRecoveryMessageName(recoverySource, messageName);
+  if((cycleMs <= 0) || (targetFrameCount <= 0))
+  {
+    testStepFail(stepName, "恢复报文来源=%d或目标帧数=%d无效。",
+                 recoverySource, targetFrameCount);
+    return 0;
+  }
+
+  // 首次59 02响应的300 ms判定等待期间，恢复帧监控可能已完成。
+  // 保留已累计的帧数，不重新置零，保证确认第3帧后立即进入下一步。
+  if((gDtcRecoveryFrameSource == recoverySource) &&
+     (gDtcRecoveryFrameTargetCount == targetFrameCount) &&
+     (gDtcRecoveryFrameCount >= targetFrameCount))
+  {
+    gDtcRecoveryFrameMonitorActive = 0;
+  }
+  else if((!gDtcRecoveryFrameMonitorActive) ||
+          (gDtcRecoveryFrameSource != recoverySource) ||
+          (gDtcRecoveryFrameTargetCount != targetFrameCount))
+  {
+    gDtcRecoveryFrameSource = recoverySource;
+    gDtcRecoveryFrameCount = 0;
+    gDtcRecoveryFrameTargetCount = targetFrameCount;
+    gDtcRecoveryFrameMonitorActive = 1;
+  }
+
+  timeoutMs = (cycleMs * (targetFrameCount + 2)) + 100;
+  if(gDtcRecoveryFrameCount < targetFrameCount)
+    testWaitForTextEvent(gDtcRecoveryFrameCompleteEvent, timeoutMs);
+  gDtcRecoveryFrameMonitorActive = 0;
+  gDtcPostFaultRecoveryMonitorStarted = 0;
+
+  if(gDtcRecoveryFrameCount < targetFrameCount)
+  {
+    testStepFail(stepName, "%s在%d ms内仅收到%d/%d帧正常报文。",
+                 messageName, timeoutMs, gDtcRecoveryFrameCount, targetFrameCount);
+    return 0;
+  }
+
+  testStepPass(stepName, "%s已收到%d帧正常报文。",
+               messageName, gDtcRecoveryFrameCount);
+  return 1;
+}
+
+int ConfirmDtcCaseBaseline()
+{
+  if(gDtcCaseBaselineSource <= 0)
+  {
+    testStepFail("DTC基准报文", "未配置关联报文来源。");
+    return 0;
+  }
+
+  return WaitForDtcRecoveryFrames(gDtcCaseBaselineSource,
+                                  kDtcCaseBaselineFrameTargetCount,
+                                  "DTC基准报文");
+}
+
+int BeginDtcCase(int recoverySource)
+{
+  gDtcFaultFrameCompletionTimestampMs = 0.0;
+  gDtcFaultFrameCompletionReady = 0;
+  RestoreAllDtcMessageSources();
+  gDtcCaseBaselineSource = recoverySource;
+  gDtcReadRecoverySource = recoverySource;
+  if(!ConfirmDtcCaseBaseline())
+    return 0;
+
+  return ClearAllDtcs();
+}
+
+// Compatibility helper for legacy T1V testcases that configure recovery directly.
+void ConfigureDtcReadRecovery(int recoverySource)
+{
+  gDtcReadRecoverySource = recoverySource;
+}
+void StartDtcPostFaultRecoveryAfterFinalDtcResponse()
+{
+  int recoverySource;
+
+  if(!gDtcStartRecoveryOnFinalResponse)
+    return;
+
+  recoverySource = gDtcReadRecoverySource;
+  if(recoverySource <= 0)
+  {
+    testStepFail("DTC恢复", "未配置恢复报文来源。");
+    return;
+  }
+
+  // 首次故障态DTC读取完成后立即恢复正常报文。
+  RestoreAllDtcMessageSources();
+  gDtcReadRecoverySource = recoverySource;
+  gDtcRecoveryFrameSource = recoverySource;
+  gDtcRecoveryFrameCount = 0;
+  gDtcRecoveryFrameTargetCount = kDtcRecoveryFrameTargetCount;
+  gDtcRecoveryFrameMonitorActive = 1;
+  gDtcPostFaultRecoveryMonitorStarted = 1;
+}
+
+// 发送19 02 09并接收最终59 02响应；判定等待由调用方按时序选择。
+int ReadCurrentDtc190209Response(byte responseBytes[], int responseBufferLength,
+                                 char stepName[])
+{
+  byte requestBytes[3];
+  int responseLength;
+  int waitResult;
+  int pendingCount;
+  long sendResult;
+  diagRequest* request;
+  diagResponse request response;
+
+  diagSetTarget("T1V_G_RLCR");
+  requestBytes[0] = 0x19;
+  requestBytes[1] = 0x02;
+  requestBytes[2] = 0x09;
+  DiagResize(request, elcount(requestBytes));
+  DiagSetPrimitiveData(request, requestBytes, elcount(requestBytes));
+  sendResult = diagSendRequest(request);
+  if(sendResult < 0)
+  {
+    testStepFail(stepName, "19 02 09发送失败，结果=%ld。", sendResult);
+    return 0;
+  }
+
+  testWaitForDiagRequestSent(request, 100);
+  for(pendingCount = 0; pendingCount < 5; pendingCount++)
+  {
+    waitResult = testWaitForDiagResponse(request, 1000);
+    if(waitResult != 1)
+      continue;
+
+    diagGetLastResponse(request, response);
+    responseLength = diagGetPrimitiveData(response, responseBytes,
+                                          responseBufferLength);
+    if((responseLength >= 3) && (responseBytes[0] == 0x7F) &&
+       (responseBytes[1] == 0x19) && (responseBytes[2] == 0x78))
+      continue;
+
+    if((responseLength >= 3) && (responseBytes[0] == 0x59) &&
+       (responseBytes[1] == 0x02))
+    {
+      testStep(stepName,
+               "已解析19 02 09最终59 02肯定响应：59 02 %02X。",
+               responseBytes[2]);
+      if(!gDtcSkipReadResponseJudgeDelay)
+        testWaitForTimeout(kDtcResultJudgeDelayMs);
+      return responseLength;
+    }
+
+    if((responseLength >= 3) && (responseBytes[0] == 0x7F) &&
+       (responseBytes[1] == 0x19))
+    {
+      testStepFail(stepName, "19 02 09被拒绝，NRC=0x%02X。",
+                   responseBytes[2]);
+      return 0;
+    }
+  }
+
+  testStepFail(stepName, "19 02 09在5000 ms内未返回最终59 02。");
+  return 0;
+}
+
+int IsDtcStatusAllowed(int actualStatus, int expectedStatus,
+                       int allowPendingStatus)
+{
+  if(expectedStatus < 0)
+    return 1;
+  if(actualStatus == expectedStatus)
+    return 1;
+  return allowPendingStatus && (expectedStatus == kDtcFaultStatus) &&
+         (actualStatus == kDtcFaultPendingStatus);
+}
+
+// 在已接收的59 02响应中查找目标DTC，并同时校验状态字节和关联通讯丢失DTC。
+int CheckDtcInCurrentResponse(dword expectedDtc, int expectDtc,
+                              int expectedStatus, int allowPendingStatus,
+                              dword absentDtc)
+{
+  byte responseBytes[512];
+  int responseLength;
+  int index;
+  dword actualDtc;
+
+  responseLength = ReadCurrentDtc190209Response(
+    responseBytes, elcount(responseBytes), "读取当前DTC");
+  if(responseLength <= 0)
+    return 0;
+
+  for(index = 3; (index + 3) < responseLength; index += 4)
+  {
+    actualDtc = ((dword)responseBytes[index] << 16) |
+                ((dword)responseBytes[index + 1] << 8) |
+                responseBytes[index + 2];
+
+    if((absentDtc != 0) && (actualDtc == absentDtc))
+    {
+      testStepFail("读取当前DTC",
+                   "检测到非预期通讯丢失DTC 0x%06X，状态=0x%02X。",
+                   absentDtc, responseBytes[index + 3]);
+      return 0;
+    }
+
+    if(actualDtc != expectedDtc)
+      continue;
+
+    if(!expectDtc)
+    {
+      testStepFail("读取当前DTC", "检测到非预期DTC 0x%06X，状态=0x%02X。",
+                   expectedDtc, responseBytes[index + 3]);
+      return 0;
+    }
+
+    if(!IsDtcStatusAllowed(responseBytes[index + 3], expectedStatus,
+                           allowPendingStatus))
+    {
+      if(allowPendingStatus && (expectedStatus == kDtcFaultStatus))
+        testStepFail("读取当前DTC",
+                     "DTC 0x%06X状态=0x%02X，期望0x01或0x09。",
+                     expectedDtc, responseBytes[index + 3]);
+      else
+        testStepFail("读取当前DTC",
+                     "DTC 0x%06X状态=0x%02X，期望0x%02X。",
+                     expectedDtc, responseBytes[index + 3], expectedStatus);
+      return 0;
+    }
+
+    testStepPass("读取当前DTC", "DTC 0x%06X状态=0x%02X。",
+                 expectedDtc, responseBytes[index + 3]);
+    return 1;
+  }
+
+  if(expectDtc)
+  {
+    testStepFail("读取当前DTC", "期望DTC 0x%06X未找到。",
+                 expectedDtc);
+    return 0;
+  }
+
+  testStepPass("读取当前DTC", "DTC 0x%06X未找到。", expectedDtc);
+  return 1;
+}
+
+dword GetCommunicationLossDtcForRecoverySource(int recoverySource)
+{
+  if((recoverySource == kDtcRecoverySourceOnebox1) ||
+     (recoverySource == kDtcRecoverySourceOnebox3))
+    return kDtcOneboxMessageLoss;
+  if(recoverySource == kDtcRecoverySourceSas1)
+    return kDtcSasMessageLoss;
+  if((recoverySource == kDtcRecoverySourceAcu2) ||
+     (recoverySource == kDtcRecoverySourceAcu3))
+    return kDtcAcuMessageLoss;
+  if(recoverySource == kDtcRecoverySourceRrcr2)
+    return kDtcRrcrMessageLoss;
+  if(recoverySource == kDtcRecoverySourceIccCom8)
+    return 0xC24587;
+  if((recoverySource == kDtcRecoverySourceFlzcu1) ||
+     (recoverySource == kDtcRecoverySourceFlzcu9) ||
+     (recoverySource == kDtcRecoverySourceFrzcu1) ||
+     (recoverySource == kDtcRecoverySourceRzcu2))
+    return kDtcLeftZoneMessageLoss;
+  if(recoverySource == kDtcRecoverySourceVcuCom10)
+    return kDtcVcuCommunicationLoss;
+  return 0;
+}
+int CheckRecoveredDtcWithStatus09Retry(dword expectedDtc, dword communicationLossDtc)
+{
+  byte responseBytes[512];
+  int responseLength;
+  int index;
+  int actualStatus;
+  int recoverySource;
+  dword actualDtc;
+
+  // 恢复状态读取不再固定等待判定时间，避免快周期报文多恢复。
+  gDtcSkipReadResponseJudgeDelay = 1;
+  responseLength = ReadCurrentDtc190209Response(
+    responseBytes, elcount(responseBytes), "恢复状态读取");
+  gDtcSkipReadResponseJudgeDelay = 0;
+  if(responseLength <= 0)
+    return 0;
+
+  actualStatus = -1;
+  for(index = 3; (index + 3) < responseLength; index += 4)
+  {
+    actualDtc = ((dword)responseBytes[index] << 16) |
+                ((dword)responseBytes[index + 1] << 8) |
+                responseBytes[index + 2];
+    if((communicationLossDtc != 0) && (actualDtc == communicationLossDtc))
+    {
+      testStepFail("恢复状态读取", "检测到非预期通讯丢失DTC 0x%06X。",
+                   communicationLossDtc);
+      return 0;
+    }
+    if(actualDtc == expectedDtc)
+    {
+      actualStatus = responseBytes[index + 3];
+      break;
+    }
+  }
+
+  if(actualStatus < 0)
+  {
+    testStepFail("恢复状态读取", "未找到目标DTC 0x%06X。", expectedDtc);
+    return 0;
+  }
+  if(actualStatus == kDtcRecoveredStatus)
+  {
+    testWaitForTimeout(1);
+    testStepPass("恢复状态读取", "DTC 0x%06X恢复状态=0x08。", expectedDtc);
+    return 1;
+  }
+  if(actualStatus != kDtcFaultStatus)
+  {
+    testStepFail("恢复状态读取", "DTC 0x%06X恢复状态=0x%02X，期望0x08。",
+                 expectedDtc, actualStatus);
+    return 0;
+  }
+
+  recoverySource = gDtcReadRecoverySource;
+  testStepWarning("故障恢复",
+                  "第3帧恢复报文后的首次19 02 09仍为0x09；将额外等待%d帧并复读，仅记录诊断响应，当前实现仍判定失败。",
+                  kDtcPostFaultRecoveryRetryFrameTargetCount);
+  if(!WaitForDtcRecoveryFrames(recoverySource,
+                               kDtcPostFaultRecoveryRetryFrameTargetCount,
+                               "DTC恢复补充帧（仅记录）"))
+    return 0;
+
+  gDtcSkipReadResponseJudgeDelay = 1;
+  responseLength = ReadCurrentDtc190209Response(
+    responseBytes, elcount(responseBytes), "恢复状态复读（仅记录）");
+  gDtcSkipReadResponseJudgeDelay = 0;
+  if(responseLength <= 0)
+    return 0;
+
+  testWaitForTimeout(1);
+  testStepFail("故障恢复",
+               "第3帧恢复报文后的首次19 02 09仍为0x09；补充帧后的复读不参与状态判定，按当前逻辑判定失败。");
+  return 0;
+}
+int CheckCurrentDtc(dword expectedDtc)
+{
+  dword communicationLossDtc;
+  int result;
+  int faultResult;
+
+  communicationLossDtc =
+    GetCommunicationLossDtcForRecoverySource(gDtcReadRecoverySource);
+  gDtcSkipReadResponseJudgeDelay = 1;
+  faultResult = CheckDtcInCurrentResponse(expectedDtc, 1, kDtcFaultStatus, 1,
+    communicationLossDtc);
+  gDtcSkipReadResponseJudgeDelay = 0;
+  // 首次故障态DTC读取完成后立即恢复，并从此时开始计数正常帧。
+  // 后续恢复状态读取严格发生在连续第3帧正常报文之后。
+  gDtcStartRecoveryOnFinalResponse = 1;
+  StartDtcPostFaultRecoveryAfterFinalDtcResponse();
+  gDtcStartRecoveryOnFinalResponse = 0;
+  gDtcSkipReadResponseJudgeDelay = 0;
+  if(!WaitForDtcRecoveryFrames(gDtcReadRecoverySource,
+                               kDtcRecoveryFrameTargetCount,
+                               "DTC恢复"))
+    return 0;
+
+  // 收到第3帧正常恢复报文后等待5 ms，再复读DTC。
+  testWaitForTimeout(5);
+  result = CheckRecoveredDtcWithStatus09Retry(expectedDtc, communicationLossDtc);
+  return faultResult && result;
+}
+
+int CheckCurrentDtcAndNoCommunicationLoss(dword expectedDtc,
+  dword communicationLossDtc, char messageName[])
+{
+  int result;
+  int faultResult;
+
+  WaitAfterFaultFramesBeforeDtcRead(messageName);
+
+  gDtcSkipReadResponseJudgeDelay = 1;
+  faultResult = CheckDtcInCurrentResponse(expectedDtc, 1, kDtcFaultStatus, 1,
+    communicationLossDtc);
+  gDtcSkipReadResponseJudgeDelay = 0;
+  // 无通讯丢失DTC场景同样在首次读取后恢复，再确认连续3帧。
+  gDtcStartRecoveryOnFinalResponse = 1;
+  StartDtcPostFaultRecoveryAfterFinalDtcResponse();
+  gDtcStartRecoveryOnFinalResponse = 0;
+  gDtcSkipReadResponseJudgeDelay = 0;
+  if(!WaitForDtcRecoveryFrames(gDtcReadRecoverySource,
+                               kDtcRecoveryFrameTargetCount,
+                               "DTC恢复"))
+    return 0;
+
+  // 收到第3帧正常恢复报文后等待5 ms，再复读DTC。
+  testWaitForTimeout(5);
+  result = CheckRecoveredDtcWithStatus09Retry(expectedDtc, communicationLossDtc);
+  return faultResult && result;
+}
+
+int CheckCurrentDtcAbsent(dword expectedDtc)
+{
+  return CheckDtcInCurrentResponse(expectedDtc, 0, -1, 0, 0);
+}
+
+int CheckCommunicationLossDtc(dword expectedDtc)
+{
+  return CheckDtcInCurrentResponse(expectedDtc, 1, -1, 0, 0);
+}
+
+// 仅在BeginDtcCase已确认关联报文连续5帧正常后清除DTC，避免基准不稳定影响结果。
+int ClearAllDtcs()
+{
+
+  byte requestBytes[4];
+  byte responseBytes[16];
+  int responseLength;
+  int waitResult;
+  int pendingCount;
+  int clearAttempt;
+  long sendResult;
+  diagRequest* request;
+  diagResponse request response;
+
+  InitReportAndLog("DtcFault_report");
+  diagSetTarget("T1V_G_RLCR");
+  requestBytes[0] = 0x14;
+  requestBytes[1] = 0xFF;
+  requestBytes[2] = 0xFF;
+  requestBytes[3] = 0xFF;
+
+  for(clearAttempt = 1; clearAttempt <= kDtcClearRetryCount; clearAttempt++)
+  {
+    DiagResize(request, elcount(requestBytes));
+    DiagSetPrimitiveData(request, requestBytes, elcount(requestBytes));
+    sendResult = diagSendRequest(request);
+    if(sendResult < 0)
+      waitResult = -1;
+    else
+    {
+      testWaitForDiagRequestSent(request, 100);
+      for(pendingCount = 0; pendingCount < 6; pendingCount++)
+      {
+        waitResult = testWaitForDiagResponse(request, 5000);
+        if(waitResult != 1)
+          break;
+
+        diagGetLastResponse(request, response);
+        responseLength = diagGetPrimitiveData(response, responseBytes,
+                                              elcount(responseBytes));
+        if(responseLength <= 0)
+        {
+          waitResult = -2;
+          break;
+        }
+
+        if((responseLength == 3) && (responseBytes[0] == 0x7F) &&
+           (responseBytes[1] == 0x14) && (responseBytes[2] == 0x78))
+          continue;
+
+        if((responseLength == 1) && (responseBytes[0] == 0x54))
+        {
+          testStepPass("清除DTC", "14 FF FF FF响应=54。");
+          testStep("清除DTC", "14服务收到54后等待%d ms再进行故障注入。",
+                   kDtcClearCompleteWaitMs);
+          testWaitForTimeout(kDtcClearCompleteWaitMs);
+          return 1;
+        }
+
+        testStepFail("清除DTC", "非预期14服务响应，长度=%d，首字节=0x%02X。",
+                     responseLength, responseBytes[0]);
+        return 0;
+      }
+
+      if(pendingCount >= 6)
+      {
+        testStepFail("清除DTC", "14 FF FF FF持续等待30秒未完成。");
+        return 0;
+      }
+    }
+
+    if(clearAttempt < kDtcClearRetryCount)
+    {
+      testStepWarning("清除DTC", "14服务通讯未就绪，%d ms后重试（%d/%d）。",
+                      kDtcClearRetryDelayMs, clearAttempt + 1,
+                      kDtcClearRetryCount);
+      testWaitForTimeout(kDtcClearRetryDelayMs);
+    }
+  }
+
+  testStepFail("清除DTC", "14 FF FF FF重试%d次后仍失败。",
+               kDtcClearRetryCount);
+  return 0;
+}
+
+// ===== 普通通讯丢失：关闭仿真源保持指定时长，再由公共恢复流程恢复 =====
+int SetCommunicationLossFault(int faultSource, int enabled, int durationMs)
+{
+  if(faultSource == 0)
+  {
+    @sysvar::Vehicle_input::Message_MissingTime::ONEBOX_1_0x98 = durationMs;
+    @sysvar::Vehicle_input::MSG::ONEBOX_1_0x98 = enabled;
+  }
+  else if(faultSource == 1)
+  {
+    @sysvar::Vehicle_input::Message_MissingTime::SAS_1_0x132 = durationMs;
+    @sysvar::Vehicle_input::MSG::SAS_1_0x132 = enabled;
+  }
+  else if(faultSource == 2)
+  {
+    @sysvar::Vehicle_input::Message_MissingTime::ACU_3_0x021 = durationMs;
+    @sysvar::Vehicle_input::MSG::ACU_3_0x021 = enabled;
+  }
+  else if(faultSource == 3)
+  {
+    @sysvar::Vehicle_input::Message_MissingTime::RRCR_2_0x4F7 = durationMs;
+    @sysvar::Vehicle_input::MSG::RRCR_2_0x4F7 = enabled;
+  }
+  else if(faultSource == 4)
+  {
+    @sysvar::Vehicle_input::Message_MissingTime::ICC_COM_8_0x510 = durationMs;
+    @sysvar::Vehicle_input::MSG::ICC_COM_8_0x510 = enabled;
+  }
+  else if(faultSource == 5)
+  {
+    @sysvar::Vehicle_input::Message_MissingTime::FLZCU_1_0x23B = durationMs;
+    @sysvar::Vehicle_input::MSG::FLZCU_1_0x23B = enabled;
+  }
+  else if(faultSource == 6)
+  {
+    @sysvar::Vehicle_input::Message_MissingTime::VCU_COM_10_0x38 = durationMs;
+    @sysvar::Vehicle_input::MSG::VCU_COM_10_0x38 = enabled;
+  }
+  else
+  {
+    return 0;
+  }
+
+  return 1;
+}
+
+void GetCommunicationLossMessageName(int faultSource, char messageName[])
+{
+  if(faultSource == 0)
+    snprintf(messageName, elcount(messageName), "ONEBOX_1（0x098，来源0）");
+  else if(faultSource == 1)
+    snprintf(messageName, elcount(messageName), "SAS_1（0x132，来源1）");
+  else if(faultSource == 2)
+    snprintf(messageName, elcount(messageName), "ACU_3（0x021，来源2）");
+  else if(faultSource == 3)
+    snprintf(messageName, elcount(messageName), "RRCR_2（0x4F7，来源3）");
+  else if(faultSource == 4)
+    snprintf(messageName, elcount(messageName), "ICC_COM_8（0x510，来源4）");
+  else if(faultSource == 5)
+    snprintf(messageName, elcount(messageName), "FLZCU_1（0x23B，来源5）");
+  else if(faultSource == 6)
+    snprintf(messageName, elcount(messageName), "VCU_COM_10（0x038，来源6）");
+  else
+    snprintf(messageName, elcount(messageName), "未知来源%d", faultSource);
+}
+
+dword GetCommunicationLossDtc(int faultSource)
+{
+  if(faultSource == 0)
+    return 0xC12987;
+  if(faultSource == 1)
+    return 0xC13187;
+  if(faultSource == 2)
+    return 0xC15187;
+  if(faultSource == 3)
+    return 0xD16987;
+  if(faultSource == 4)
+    return 0xC24587;
+  if(faultSource == 5)
+    return 0xC14187;
+
+  if(faultSource == 6)
+    return kDtcVcuCommunicationLoss;
+  return 0;
+}
+
+int GetCommunicationLossCycleTimeMs(int faultSource)
+{
+  if((faultSource == 0) || (faultSource == 1) || (faultSource == 2))
+    return 10;
+  if(faultSource == 6)
+    return 10;
+  if(faultSource == 5)
+    return 20;
+  if(faultSource == 3)
+    return 100;
+  if(faultSource == 4)
+    return 500;
+
+  return 0;
+}
+
+// 通讯丢失注入前先确认连续5帧正常报文，实测周期写入报告；
+// 这样丢失起点和恢复帧均能基于真实总线周期判断。
+int WaitForCommunicationLossStabilization(int faultSource, char messageName[])
+{
+  int expectedCycleMs;
+  int timeoutMs;
+
+  expectedCycleMs = GetCommunicationLossCycleTimeMs(faultSource);
+  if(expectedCycleMs <= 0)
+  {
+    testStepFail("正常报文稳定",
+                 "%s未配置报文周期。", messageName);
+    return 0;
+  }
+
+  if(!SetCommunicationLossFault(faultSource, 0, 0))
+  {
+    testStepFail("正常报文稳定",
+                 "无法恢复%s报文发送。", messageName);
+    return 0;
+  }
+
+  gCommunicationLossStabilizationActive = 1;
+  gCommunicationLossStabilizationSource = faultSource;
+  gCommunicationLossStabilizationFrameCount = 0;
+  gCommunicationLossStabilizationReady = 0;
+  gCommunicationLossPreviousTimestampMs = 0.0;
+  gCommunicationLossObservedCycleMs = 0.0;
+  timeoutMs = expectedCycleMs * (kCommunicationLossStabilizationFrameCount + 2);
+
+  testStep("正常报文稳定",
+           "%s配置周期=%d ms；清除DTC后等待连续%d帧正常报文。",
+           messageName, expectedCycleMs, kCommunicationLossStabilizationFrameCount);
+  if(!gCommunicationLossStabilizationReady)
+    testWaitForTextEvent(gDtcFaultCommLossStabilizedEvent, timeoutMs);
+
+  gCommunicationLossStabilizationActive = 0;
+  if(!gCommunicationLossStabilizationReady)
+  {
+    testStepFail("正常报文稳定",
+                 "%s在%d ms内仅收到%d/%d帧正常报文，未开始丢失注入。",
+                 messageName,
+                 timeoutMs,
+                 gCommunicationLossStabilizationFrameCount,
+                 kCommunicationLossStabilizationFrameCount);
+    return 0;
+  }
+
+  testStepPass("正常报文稳定",
+               "%s连续%d帧正常发送确认，实测周期=%.3f ms；开始制造通讯丢失。",
+               messageName,
+               kCommunicationLossStabilizationFrameCount,
+               gCommunicationLossObservedCycleMs);
+  return 1;
+}
+
+// 为兼容现有T1V用例的日志分组保留该适配函数。
+void SelectDtcLoggingGroup(int groupId)
+{
+  if(groupId == 0)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "00_DTC会话");
+  else if(groupId == 1)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "01_C12987_集成制动控制器通讯丢失");
+  else if(groupId == 2)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "02_C13187_电动助力转向控制器通讯丢失");
+  else if(groupId == 3)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "03_C15187_气囊控制器通讯丢失");
+  else if(groupId == 4)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "04_D16987_后右角雷达通讯丢失");
+  else if(groupId == 5)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "05_C24587_信息计算中心通讯丢失");
+  else if(groupId == 6)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "06_C14187_左区域控制器通讯丢失");
+  else if(groupId == 7)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "07_C14087_VCU控制器失去通讯");
+  else if(groupId == 8)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "08_C44381_VCU控制器网络信号无效");
+  else if(groupId == 9)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "09_C41881_集成制动控制器车速信号无效");
+  else if(groupId == 10)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "10_C42081_电动助力转向控制器网络信号无效");
+  else if(groupId == 11)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "11_C45281_气囊纵向加速度信号无效");
+  else if(groupId == 12)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "12_C44481_左区域控制器网络信号无效");
+  else if(groupId == 13)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "13_D43681_后右角雷达网络信号无效");
+  else if(groupId == 15)
+    snprintf(gDtcLoggingGroupName, elcount(gDtcLoggingGroupName), "15_压力测试");
+  else
+    gDtcLoggingGroupName[0] = 0;
+}
+
+void SelectDtcLoggingGroupForCommunicationLoss(int faultSource)
+{
+  if(faultSource == 0)
+    SelectDtcLoggingGroup(1);
+  else if(faultSource == 1)
+    SelectDtcLoggingGroup(2);
+  else if(faultSource == 2)
+    SelectDtcLoggingGroup(3);
+  else if(faultSource == 3)
+    SelectDtcLoggingGroup(4);
+  else if(faultSource == 4)
+    SelectDtcLoggingGroup(5);
+  else if(faultSource == 5)
+    SelectDtcLoggingGroup(6);
+  else if(faultSource == 6)
+    SelectDtcLoggingGroup(7);
+  else
+    SelectDtcLoggingGroup(-1);
+}
+
+void SelectDtcLoggingGroupForCrc(int crcSource)
+{
+  if((crcSource >= 1) && (crcSource <= 3))
+    SelectDtcLoggingGroup(12);
+  else if((crcSource == 4) || (crcSource == 5) ||
+          ((crcSource >= 10) && (crcSource <= 12)))
+    SelectDtcLoggingGroup(9);
+  else if(crcSource == 6)
+    SelectDtcLoggingGroup(10);
+  else if((crcSource == 7) || (crcSource == 8))
+    SelectDtcLoggingGroup(11);
+  else if(crcSource == 9)
+    SelectDtcLoggingGroup(13);
+  else if(crcSource == 13)
+    SelectDtcLoggingGroup(8);
+  else
+    SelectDtcLoggingGroup(-1);
+}
+
+void SelectDtcLoggingGroupForCounter(int counterSource)
+{
+  if(counterSource == 14)
+    SelectDtcLoggingGroup(8);
+  else
+    SelectDtcLoggingGroupForCrc(counterSource);
+}
+// 普通通讯丢失用例按设定时间停发；精确阈值验证请使用下方Boundary实现。
+
+
+// 通讯丢失阈值通用流程：清DTC -> 确认正常周期 -> 从最后正常帧开始停发 ->
+// 到目标总线时间发送一帧正确恢复报文 -> 观察500 ms -> 读取19 02 09判定DTC。
+void Impl_Dtc_CommunicationLossBoundary_Run(int faultSource, int durationMs,
+                                           int expectDtc)
+{
+  dword expectedDtc;
+  float actualLossMs;
+  char messageName[64];
+  char caseDescription[160];
+  char expectedState[48];
+
+  GetCommunicationLossMessageName(faultSource, messageName);
+  expectedDtc = GetCommunicationLossDtc(faultSource);
+  if((expectedDtc == 0) || (durationMs <= 0) ||
+     ((expectDtc != 0) && (expectDtc != 1)))
+  {
+    testStepFail("通讯丢失阈值配置",
+                 "不支持的来源=%d、持续时间=%d ms或DTC期望=%d。",
+                 faultSource, durationMs, expectDtc);
+    return;
+  }
+
+  if(expectDtc)
+    snprintf(expectedState, elcount(expectedState), "应存在");
+  else
+    snprintf(expectedState, elcount(expectedState), "不应存在");
+
+  snprintf(caseDescription, elcount(caseDescription),
+           "%s通讯丢失%d ms：DTC 0x%06X，%s。",
+           messageName, durationMs, expectedDtc, expectedState);
+  DtcReportCaseTitle("DTC通讯丢失阈值", caseDescription);
+  if(!BeginDtcCase(GetDtcRecoverySourceForCommunicationLoss(faultSource)))
+    return;
+
+  // 0x4F7使用专用原始报文恢复逻辑，单独校验其最后正常帧和恢复帧时间差。
+  if(faultSource == 3)
+  {
+    ResetRrcr2BoundaryTiming();
+    gLastRRCR2Valid = 0;
+    if(!WaitForCommunicationLossStabilization(faultSource, messageName))
+      return;
+    if(!gLastRRCR2Valid)
+    {
+      testStepFail("总线时间注入",
+                   "未收到正常0x4F7报文，无法以总线时间为基准制造通讯丢失。");
+      return;
+    }
+
+    gRrcr2BoundaryRequestedDurationMs = durationMs;
+    gRrcr2BoundaryArm = 1;
+    testStep("故障注入",
+             "等待下一帧正常0x4F7后立即停发；恢复帧目标时间=最后正常帧+%d ms。",
+             durationMs);
+
+    if(!gRrcr2BoundaryInjectionActive)
+      testWaitForTextEvent(gDtcFaultRrcr2InjectionStartedEvent, 500);
+    if(!gRrcr2BoundaryInjectionActive)
+    {
+      ResetRrcr2BoundaryTiming();
+      testStepFail("总线时间注入",
+                   "等待0x4F7最后正常帧超时，未启动总线时间定时器。");
+      return;
+    }
+
+    if(!gRrcr2BoundaryRecoveryFrameSent)
+      testWaitForTextEvent(gDtcFaultRrcr2RecoverySentEvent, durationMs + 100);
+    if(!gRrcr2BoundaryRecoveryFrameSent)
+    {
+      ResetRrcr2BoundaryTiming();
+      testStepFail("总线时间注入",
+                   "0x4F7恢复帧未在目标总线时间发送。");
+      return;
+    }
+
+    if(gRrcr2BoundaryUnexpectedFrameCount > 0)
+    {
+      testStepFail("丢失窗口帧监控",
+                   "0x4F7丢失窗口内检测到%d帧报文；首帧时间戳=%.3f ms。",
+                   gRrcr2BoundaryUnexpectedFrameCount,
+                   gRrcr2BoundaryFirstUnexpectedFrameTimestampMs);
+      return;
+    }
+    testStepPass("丢失窗口帧监控",
+                 "0x4F7从最后正常帧到恢复帧之间未检测到报文。");
+
+    actualLossMs = gRrcr2BoundaryRecoveryTimestampMs -
+                   gRrcr2BoundaryLastFrameTimestampMs;
+    if((actualLossMs < (durationMs - kRrcr2BoundaryTimingToleranceMs)) ||
+       (actualLossMs > (durationMs + kRrcr2BoundaryTimingToleranceMs)))
+    {
+      testStepFail("总线时间校验",
+                   "最后正常帧=%.3f ms，恢复帧=%.3f ms，实测丢失=%.3f ms；目标=%d +/- %.1f ms。",
+                   gRrcr2BoundaryLastFrameTimestampMs,
+                   gRrcr2BoundaryRecoveryTimestampMs,
+                   actualLossMs,
+                   durationMs,
+                   kRrcr2BoundaryTimingToleranceMs);
+      return;
+    }
+    testStepPass("总线时间校验",
+                 "最后正常帧=%.3f ms，恢复帧=%.3f ms，实测丢失=%.3f ms；目标=%d +/- %.1f ms。",
+                 gRrcr2BoundaryLastFrameTimestampMs,
+                 gRrcr2BoundaryRecoveryTimestampMs,
+                 actualLossMs,
+                 durationMs,
+                 kRrcr2BoundaryTimingToleranceMs);
+
+    // 恢复帧发出后仍等待500 ms，让ECU完成故障去抖和DTC状态更新后再读取。
+    testWaitForTimeout(kDtcFaultObserveTimeMs);
+    if(expectDtc)
+      CheckCommunicationLossDtc(expectedDtc);
+    else
+      CheckCurrentDtcAbsent(expectedDtc);
+
+    testStep("故障恢复",
+             "0x4F7已在目标总线时间恢复，IL周期发送已重新启用。");
+    return;
+  }
+
+  // 其余报文共用通讯丢失状态机：等待下一帧正常报文到达后才真正开始停发。
+  ResetCommunicationLossBoundaryTiming();
+  ResetCommunicationLossBoundarySourceFrame(faultSource);
+  if(!WaitForCommunicationLossStabilization(faultSource, messageName))
+    return;
+  if(!HasCommunicationLossBoundarySourceFrame(faultSource))
+  {
+    testStepFail("总线时间注入",
+                 "%s未收到可用于恢复的正常报文。", messageName);
+    return;
+  }
+
+  gCommunicationLossBoundarySource = faultSource;
+  gCommunicationLossBoundaryRequestedDurationMs = durationMs;
+  gCommunicationLossBoundaryArm = 1;
+  testStep("故障注入",
+           "%s：等待下一帧正常报文后立即停发；恢复帧目标时间=最后正常帧+%d ms。",
+           messageName, durationMs);
+  if(!gCommunicationLossBoundaryInjectionActive)
+    testWaitForTextEvent(gDtcFaultCommLossInjectionStartedEvent,
+                          GetCommunicationLossCycleTimeMs(faultSource) * 2 + 100);
+  if(!gCommunicationLossBoundaryInjectionActive)
+  {
+    ResetCommunicationLossBoundaryTiming();
+    testStepFail("总线时间注入",
+                 "%s最后正常帧等待超时，未启动总线时间定时器。", messageName);
+    return;
+  }
+
+  if(!gCommunicationLossBoundaryRecoveryFrameSent)
+    testWaitForTextEvent(gDtcFaultCommLossRecoverySentEvent,
+                          durationMs + GetCommunicationLossCycleTimeMs(faultSource) * 2 + 100);
+  if(!gCommunicationLossBoundaryRecoveryFrameSent)
+  {
+    testStepFail("总线时间注入",
+                 "%s恢复帧未能在停发后的%d ms内发送；停发后仍观察到%d帧，最后帧时间戳=%.3f ms。",
+                 messageName,
+                 durationMs + GetCommunicationLossCycleTimeMs(faultSource) * 2 + 100,
+                 gCommunicationLossBoundaryUnexpectedFrameCount,
+                 gCommunicationLossBoundaryLastFrameTimestampMs);
+    ResetCommunicationLossBoundaryTiming();
+    return;
+  }
+
+  if(gCommunicationLossBoundaryUnexpectedFrameCount > 0)
+  {
+    testStepPass("丢失窗口帧监控",
+                 "%s停发后观察到%d帧，首帧=%.3f ms，最后帧=%.3f ms；最后帧后静默%d ms后恢复。",
+                 messageName,
+                 gCommunicationLossBoundaryUnexpectedFrameCount,
+                 gCommunicationLossBoundaryFirstUnexpectedFrameTimestampMs,
+                 gCommunicationLossBoundaryLastFrameTimestampMs,
+                 durationMs);
+  }
+  else
+  {
+    testStepPass("丢失窗口帧监控",
+                 "%s从最后正常帧到恢复帧之间未检测到报文。", messageName);
+  }
+
+  actualLossMs = gCommunicationLossBoundaryRecoveryTimestampMs -
+                 gCommunicationLossBoundaryLastFrameTimestampMs;
+  if((actualLossMs < (durationMs - kRrcr2BoundaryTimingToleranceMs)) ||
+     (actualLossMs > (durationMs + kRrcr2BoundaryTimingToleranceMs)))
+  {
+    testStepFail("总线时间校验",
+                 "%s最后正常帧=%.3f ms，恢复帧=%.3f ms，实测丢失=%.3f ms；目标=%d +/- %.1f ms。",
+                 messageName,
+                 gCommunicationLossBoundaryLastFrameTimestampMs,
+                 gCommunicationLossBoundaryRecoveryTimestampMs,
+                 actualLossMs,
+                 durationMs,
+                 kRrcr2BoundaryTimingToleranceMs);
+    return;
+  }
+  testStepPass("总线时间校验",
+               "%s最后正常帧=%.3f ms，恢复帧=%.3f ms，实测丢失=%.3f ms；目标=%d +/- %.1f ms。",
+               messageName,
+               gCommunicationLossBoundaryLastFrameTimestampMs,
+               gCommunicationLossBoundaryRecoveryTimestampMs,
+               actualLossMs,
+               durationMs,
+               kRrcr2BoundaryTimingToleranceMs);
+
+  // 恢复帧发出后仍等待500 ms，让ECU完成故障去抖和DTC状态更新后再读取。
+  testWaitForTimeout(kDtcFaultObserveTimeMs);
+  if(expectDtc)
+    CheckCommunicationLossDtc(expectedDtc);
+  else
+    CheckCurrentDtcAbsent(expectedDtc);
+
+  testStep("故障恢复",
+           "%s已在目标总线时间恢复，IL周期发送已重新启用。", messageName);
+}
+
+void Impl_Dtc_SignalInvalid_VehicleSpeed()
+{
+  DtcReportCaseTitle("DTC_002", "ONEBOX_1车速信号无效");
+  if(!BeginDtcSignalInvalidCase(kDtcRecoverySourceOnebox1,
+                                 kDtcSignalCriterionOnebox1SpeedValid))
+    return;
+
+  $CAN1::CGW::ONEBOX_1::ESP1_VehicleSpeedVSOSigValidData = 1;
+  CompleteDtcSignalInvalidCase(kDtcVehicleSpeedSignalInvalid, 10,
+                                "ONEBOX_1 (0x098)");
+}
+void Impl_Dtc_SignalInvalid_Eps()
+{
+  DtcReportCaseTitle("DTC信号无效", "转向角无效");
+  if(!BeginDtcSignalInvalidCase(kDtcRecoverySourceSas1,
+                                 kDtcSignalCriterionSasAngleRaw))
+    return;
+
+  $CAN1::CGW::SAS_1::SAM_1_SteeringAngle = 2047.9375;
+  CompleteDtcSignalInvalidCase(0xC42081, 10, "SAS_1 (0x132)");
+}
+void Impl_Dtc_SignalInvalid_EpsValidBit()
+{
+  DtcReportCaseTitle("DTC信号无效", "转向角有效位无效");
+  if(!BeginDtcSignalInvalidCase(kDtcRecoverySourceSas1,
+                                 kDtcSignalCriterionSasAngleValid))
+    return;
+
+  $CAN1::CGW::SAS_1::SAM_1_SteeringAngleVD = 1;
+  CompleteDtcSignalInvalidCase(0xC42081, 10, "SAS_1 (0x132)");
+}
+void Impl_Dtc_SignalInvalid_EpsSpeedValidBit()
+{
+  DtcReportCaseTitle("DTC信号无效", "转向角速度有效位无效");
+  if(!BeginDtcSignalInvalidCase(kDtcRecoverySourceSas1,
+                                 kDtcSignalCriterionSasAngleSpeedValid))
+    return;
+
+  $CAN1::CGW::SAS_1::SAM_1_SteeringAngleSpeedVD = 1;
+  CompleteDtcSignalInvalidCase(0xC42081, 10, "SAS_1 (0x132)");
+}
+void Impl_Dtc_SignalInvalid_Acu()
+{
+  DtcReportCaseTitle("DTC信号无效", "纵向加速度有效位无效");
+  if(!BeginDtcSignalInvalidCase(kDtcRecoverySourceAcu3,
+                                 kDtcSignalCriterionAcu3LongitudinalValid))
+    return;
+
+  $CAN1::CGW::ACU_3::ACU_3_LongitudinalAccelerationVD = 2;
+  CompleteDtcSignalInvalidCase(0xC45281, 10, "ACU_3 (0x021)");
+}
+void Impl_Dtc_SignalInvalid_AcuLateralAcceleration()
+{
+  DtcReportCaseTitle("DTC信号无效", "横向加速度无效");
+  if(!BeginDtcSignalInvalidCase(kDtcRecoverySourceAcu2,
+                                 kDtcSignalCriterionAcu2LateralRaw))
+    return;
+
+  $CAN1::CGW::ACU_2::ACU_2_LateralAcceleration = 63.535;
+  CompleteDtcSignalInvalidCase(0xC45281, 10, "ACU_2 (0x031)");
+}
+void Impl_Dtc_SignalInvalid_AcuYawRate()
+{
+  DtcReportCaseTitle("DTC信号无效", "横摆角速度无效");
+  if(!BeginDtcSignalInvalidCase(kDtcRecoverySourceAcu2,
+                                 kDtcSignalCriterionAcu2YawRaw))
+    return;
+
+  $CAN1::CGW::ACU_2::ACU_2_YawRate = 475.35;
+  CompleteDtcSignalInvalidCase(0xC45281, 10, "ACU_2 (0x031)");
+}
+void Impl_Dtc_SignalInvalid_AcuLongitudinalAcceleration()
+{
+  DtcReportCaseTitle("DTC信号无效", "纵向加速度无效");
+  if(!BeginDtcSignalInvalidCase(kDtcRecoverySourceAcu3,
+                                 kDtcSignalCriterionAcu3LongitudinalRaw))
+    return;
+
+  $CAN1::CGW::ACU_3::ACU_3_LongitudinalAcceleration = 63.535;
+  CompleteDtcSignalInvalidCase(0xC45281, 10, "ACU_3 (0x021)");
+}
+void Impl_Dtc_SignalInvalid_VehicleSpeedRaw()
+{
+  DtcReportCaseTitle("DTC信号无效", "车速无效");
+  if(!BeginDtcSignalInvalidCase(kDtcRecoverySourceOnebox1,
+                                 kDtcSignalCriterionOnebox1SpeedRaw))
+    return;
+
+  $CAN1::CGW::ONEBOX_1::ABS_ESP_1_VehicleSpeedVSOSig = 511.9375;
+  CompleteDtcSignalInvalidCase(kDtcVehicleSpeedSignalInvalid, 10,
+                                "ONEBOX_1 (0x098)");
+}
+
+
+
+
+// ===== 左区报文：信号无效、CRC、COUNT、DLC和通讯丢失的控制接口 =====
+void GetLeftZoneMessageName(int source, char messageName[])
+{
+  if(source == 1)
+    snprintf(messageName, elcount(messageName), "FLZCU_1 (0x23B)");
+  else if(source == 2)
+    snprintf(messageName, elcount(messageName), "FLZCU_9 (0x49D)");
+  else if(source == 3)
+    snprintf(messageName, elcount(messageName), "FRZCU_1 (0x2AB)");
+  else if(source == 4)
+    snprintf(messageName, elcount(messageName), "RZCU_2 (0x2BB)");
+  else
+    snprintf(messageName, elcount(messageName), "未知来源%d", source);
+}
+
+int GetLeftZoneFaultCycleMs(int source)
+{
+  if(source == 2)
+    return 100;
+
+  if((source >= 1) && (source <= 4))
+    return 20;
+
+  return 0;
+}
+
+int SetLeftZoneSignalFault(int source, int faultValue)
+{
+  if(source == 2)
+    $CAN1::CGW::FLZCU_9::FLZCU_9_ArmingSts = faultValue;
+  else
+    return 0;
+
+  return 1;
+}
+
+int SetLeftZoneCrcFault(int source, int enabled)
+{
+  if(source == 1)
+    @sysvar::Vehicle_input::Message_CRC::FLZCU_1_0x23B = enabled;
+  else if(source == 3)
+    @sysvar::Vehicle_input::Message_CRC::FRZCU_1_0x2AB = enabled;
+  else if(source == 4)
+    @sysvar::Vehicle_input::Message_CRC::RZCU_2_0x2BB = enabled;
+  else
+    return 0;
+
+  return 1;
+}
+
+int SetLeftZoneAliveCounterFault(int source, int enabled)
+{
+  if(source == 1)
+    @sysvar::Vehicle_input::Message_Counter::FLZCU_1_0x23B = enabled;
+  else if(source == 3)
+    @sysvar::Vehicle_input::Message_Counter::FRZCU_1_0x2AB = enabled;
+  else if(source == 4)
+    @sysvar::Vehicle_input::Message_Counter::RZCU_2_0x2BB = enabled;
+  else
+    return 0;
+
+  return 1;
+}
+
+void Impl_Dtc_AutomaticSession_Start()
+{
+  int pwrRet;
+
+  pwrRet = PwrInitializeItechPower();
+  DtcFaultControllerInitialize();
+  DtcReportCaseTitle("DTC_SESSION_START", "初始化DTC报告和会话日志。");
+  InitReportAndLog("DtcFault_report");
+  testModuleTitle("DTC故障测试报告");
+  StartToLogging();
+  if(PwrVoltageFluctuationEnabled() && pwrRet != 0)
+  {
+    testStepFail("程控电源初始化", "程控电源初始化失败，错误码=%d，压测不可开始。", pwrRet);
+  }
+  else
+  {
+    testStepPass("自动初始化",
+                 "报告路径：Code\\5.1Test\\ReportAndLog\\<时间戳>\\DtcFault_report.xml/.html；日志路径：LogFiles\\<testcase>.blf。");
+  }
+}
+
+void Impl_Dtc_AutomaticSession_Stop()
+{
+  DtcFaultControllerShutdown();
+  DtcReportCaseTitle("DTC_SESSION_STOP", "停止DTC会话日志。");
+  StopToLogging();
+  testStepPass("自动日志", "DTC会话日志已停止。");
+}
+
+void Impl_Dtc_LeftZoneSignalInvalid_Run(int source, int faultMode)
+{
+  char messageName[64];
+  if((source != 2) || (faultMode != 1))
+  {
+    testStepFail("DTC配置", "不支持的左区域来源=%d或故障模式=%d。",
+                 source, faultMode);
+    return;
+  }
+
+  GetLeftZoneMessageName(source, messageName);
+  DtcReportCaseTitle("DTC C44481", "FLZCU_9信号无效");
+  if(!BeginDtcSignalInvalidCase(kDtcRecoverySourceFlzcu9,
+                                 kDtcSignalCriterionFlzcu9ArmingStatus))
+    return;
+
+  if(!SetLeftZoneSignalFault(source, 3))
+  {
+    testStepFail("DTC配置", "左区域来源=%d信号无效注入失败。", source);
+    return;
+  }
+
+  CompleteDtcSignalInvalidCase(kDtcExpectedCodeLeftZoneSignalInvalid, 100,
+                                messageName);
+}
+void Impl_Dtc_LeftZoneDlc_Run(int source)
+{
+  int cycleMs;
+  int messageId;
+  char messageName[64];
+  char caseDescription[128];
+
+  cycleMs = GetLeftZoneFaultCycleMs(source);
+  if(cycleMs == 0)
+  {
+    testStepFail("DTC配置", "不支持的来源=%d。", source);
+    return;
+  }
+
+  if(source == 1)
+    messageId = 0x23B;
+  else if(source == 2)
+    messageId = 0x49D;
+  else if(source == 3)
+    messageId = 0x2AB;
+  else
+    messageId = 0x2BB;
+
+  GetLeftZoneMessageName(source, messageName);
+  snprintf(caseDescription, elcount(caseDescription),
+           "左区域控制器DLC故障：%s", messageName);
+  DtcReportCaseTitle("DTC C44481", caseDescription);
+  if(!BeginDtcCase(GetDtcRecoverySourceForLeftZone(source)))
+    return;
+
+  if(!StartDlcFaultFrameSequence(messageId) ||
+     !WaitForDlcFaultFrameSequence(cycleMs, messageName))
+    return;
+
+  CheckCurrentDtcAndNoCommunicationLoss(
+    kDtcExpectedCodeLeftZoneSignalInvalid, kDtcLeftZoneMessageLoss, messageName);
+
+  testStep("故障恢复", "%s正常DLC=8报文发送已恢复。", messageName);
+}
+
+
+
+
+
+// ===== ONEBOX报文：信号无效、CRC、COUNT、DLC和通讯丢失的控制接口 =====
+void GetOneboxMessageName(int source, char messageName[])
+{
+  if((source == 1) || (source == 3))
+    snprintf(messageName, elCount(messageName), "ONEBOX_1 (0x098)");
+  else if((source == 2) || (source == 4) || (source == 5))
+    snprintf(messageName, elCount(messageName), "ONEBOX_3 (0x22B)");
+  else
+    snprintf(messageName, elCount(messageName), "未知来源%d", source);
+}
+
+int GetOneboxCycleMs(int source)
+{
+  if((source == 1) || (source == 3))
+    return 10;
+  if((source == 2) || (source == 4) || (source == 5))
+    return 20;
+
+  return 0;
+}
+int SetOneboxSignalFault(int source, int faultMode)
+{
+  if(faultMode != 1)
+    return 0;
+
+  if(source == 1)
+    $CAN1::CGW::ONEBOX_1::ESP1_VehicleSpeedVSOSigValidData = 1;
+  else if(source == 2)
+    $CAN1::CGW::ONEBOX_3::VehicleStandstill = 2;
+  else
+  {
+    return 0;
+  }
+
+  return 1;
+}
+
+int ClearOneboxSignalFault(int source)
+{
+  if(source == 1)
+  {
+    $CAN1::CGW::ONEBOX_1::ESP1_VehicleSpeedVSOSigValidData = 0;
+  }
+  else if(source == 2)
+  {
+    $CAN1::CGW::ONEBOX_3::VehicleStandstill = 0;
+  }
+  else
+  {
+    return 0;
+  }
+
+  return 1;
+}
+
+int SetOneboxCrcFault(int source, int enabled)
+{
+  if(source == 1)
+    @sysvar::Vehicle_input::Message_CRC::ONEBOX_1_0x98_CRC1 = enabled;
+  else if(source == 2)
+    @sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC1 = enabled;
+  else if(source == 3)
+    @sysvar::Vehicle_input::Message_CRC::ONEBOX_1_0x98_CRC2 = enabled;
+  else if(source == 4)
+    @sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC2 = enabled;
+  else if(source == 5)
+    @sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC4 = enabled;
+  else
+    return 0;
+
+  return 1;
+}
+int SetOneboxAliveCounterFault(int source, int enabled)
+{
+  if(source == 1)
+    @sysvar::Vehicle_input::Message_Counter::ONEBOX_1_0x98_RC1 = enabled;
+  else if(source == 2)
+    @sysvar::Vehicle_input::Message_Counter::ONEBOX_3_0x22B_RC1 = enabled;
+  else
+    return 0;
+
+  return 1;
+}
+void Impl_Dtc_OneboxSignalFault_Run(int source, int faultMode)
+{
+  char messageName[64];
+  int recoverySource;
+  int criterion;
+  int cycleMs;
+
+  recoverySource = GetDtcRecoverySourceForOnebox(source);
+  cycleMs = GetOneboxCycleMs(source);
+  if((recoverySource == 0) || (cycleMs == 0) || (faultMode != 1))
+  {
+    testStepFail("DTC配置", "不支持的ONEBOX来源=%d或故障模式=%d。",
+                 source, faultMode);
+    return;
+  }
+
+  if(source == 1)
+    criterion = kDtcSignalCriterionOnebox1SpeedValid;
+  else if(source == 2)
+    criterion = kDtcSignalCriterionOnebox3Standstill;
+  else
+  {
+    testStepFail("DTC配置", "ONEBOX来源=%d不支持信号无效注入。", source);
+    return;
+  }
+
+  GetOneboxMessageName(source, messageName);
+  DtcReportCaseTitle("DTC C41881", "ONEBOX信号无效");
+  if(!BeginDtcSignalInvalidCase(recoverySource, criterion))
+    return;
+
+  if(!SetOneboxSignalFault(source, faultMode))
+  {
+    testStepFail("DTC配置", "ONEBOX来源=%d信号无效注入失败。", source);
+    return;
+  }
+
+  CompleteDtcSignalInvalidCase(kDtcVehicleSpeedSignalInvalid, cycleMs,
+                                messageName);
+}
+void Impl_Dtc_OneboxDlc_Run(int source)
+{
+  int cycleMs;
+  int messageId;
+  char messageName[64];
+  char caseDescription[128];
+
+  cycleMs = GetOneboxCycleMs(source);
+  if(cycleMs == 0)
+  {
+    testStepFail("DTC配置", "不支持的来源=%d。", source);
+    return;
+  }
+
+  if(source == 1)
+    messageId = 0x098;
+  else
+    messageId = 0x22B;
+
+  GetOneboxMessageName(source, messageName);
+  snprintf(caseDescription, elcount(caseDescription),
+           "ONEBOX DLC故障：%s", messageName);
+  DtcReportCaseTitle("DTC C41881", caseDescription);
+  if(!BeginDtcCase(GetDtcRecoverySourceForOnebox(source)))
+    return;
+
+  if(!StartDlcFaultFrameSequence(messageId) ||
+     !WaitForDlcFaultFrameSequence(cycleMs, messageName))
+    return;
+
+  CheckCurrentDtcAndNoCommunicationLoss(
+    kDtcVehicleSpeedSignalInvalid, kDtcOneboxMessageLoss, messageName);
+
+  testStep("故障恢复", "%s正常报文发送已恢复。", messageName);
+}
+
+
+
+
+
+void Impl_Dtc_SasDlc()
+{
+  char messageName[64];
+
+  DtcReportCaseTitle("DTC C42081", "电动助力转向控制器DLC故障");
+  if(!BeginDtcCase(kDtcRecoverySourceSas1))
+    return;
+
+  snprintf(messageName, elcount(messageName), "SAS_1 (0x132)");
+  if(!StartDlcFaultFrameSequence(0x132) ||
+     !WaitForDlcFaultFrameSequence(10, messageName))
+    return;
+
+  CheckCurrentDtcAndNoCommunicationLoss(0xC42081, kDtcSasMessageLoss, messageName);
+
+  testStep("故障恢复", "恢复SAS_1正常报文发送。");
+}
+
+
+
+
+
+// ===== ACU报文：信号无效、CRC、COUNT、DLC和通讯丢失的控制接口 =====
+void GetAcuMessageName(int source, char messageName[])
+{
+  if(source == 1)
+    snprintf(messageName, elcount(messageName), "ACU_2 (0x031)");
+  else if(source == 2)
+    snprintf(messageName, elcount(messageName), "ACU_3 (0x021)");
+  else
+    snprintf(messageName, elcount(messageName), "未知来源%d", source);
+}
+
+int SetAcuSignalFault(int source, int faultMode)
+{
+  if(source == 1)
+    $CAN1::CGW::ACU_2::ACU_2_YawrateSigValidData = 2;
+  else if(source == 2)
+    $CAN1::CGW::ACU_3::ACU_3_LongitudinalAccelerationVD = 2;
+  else
+  {
+    return 0;
+  }
+
+  return 1;
+}
+
+int ClearAcuSignalFault(int source)
+{
+  if(source == 1)
+  {
+    $CAN1::CGW::ACU_2::ACU_2_YawrateSigValidData = 0;
+  }
+  else if(source == 2)
+  {
+    $CAN1::CGW::ACU_3::ACU_3_LongitudinalAccelerationVD = 0;
+  }
+  else
+  {
+    return 0;
+  }
+
+  return 1;
+}
+
+int SetAcuCrcFault(int source, int enabled)
+{
+  if(source == 1)
+    @sysvar::Vehicle_input::Message_CRC::ACU_2_0x31 = enabled;
+  else if(source == 2)
+    @sysvar::Vehicle_input::Message_CRC::ACU_3_0x021 = enabled;
+  else
+    return 0;
+
+  return 1;
+}
+
+int SetAcuAliveCounterFault(int source, int enabled)
+{
+  if(source == 1)
+    @sysvar::Vehicle_input::Message_Counter::ACU_2_0x31 = enabled;
+  else if(source == 2)
+    @sysvar::Vehicle_input::Message_Counter::ACU_3_0x021 = enabled;
+  else
+    return 0;
+
+  return 1;
+}
+
+int SetCrcBoundaryFault(int crcSource, int enabled)
+{
+  if(crcSource == 1)
+    return SetLeftZoneCrcFault(1, enabled);
+  if(crcSource == 2)
+    return SetLeftZoneCrcFault(3, enabled);
+  if(crcSource == 3)
+    return SetLeftZoneCrcFault(4, enabled);
+  if(crcSource == 4)
+    return SetOneboxCrcFault(1, enabled);
+  if(crcSource == 5)
+    return SetOneboxCrcFault(2, enabled);
+  if(crcSource == 6)
+  {
+    @sysvar::Vehicle_input::Message_CRC::SAS_1_0x132 = enabled;
+    return 1;
+  }
+  if(crcSource == 7)
+    return SetAcuCrcFault(1, enabled);
+  if(crcSource == 8)
+    return SetAcuCrcFault(2, enabled);
+  if(crcSource == 9)
+  {
+    @sysvar::Vehicle_input::Message_CRC::RRCR_2_0x4F7 = enabled;
+    return 1;
+  }
+  if(crcSource == 10)
+    return SetOneboxCrcFault(3, enabled);
+  if(crcSource == 11)
+    return SetOneboxCrcFault(4, enabled);
+  if(crcSource == 12)
+    return SetOneboxCrcFault(5, enabled);
+  if(crcSource == 13)
+  {
+    @sysvar::Vehicle_input::Message_CRC::VCU_COM_10_0x38 = enabled;
+    return 1;
+  }
+
+  return 0;
+}
+int SetCounterBoundaryFault(int counterSource, int enabled)
+{
+  if(counterSource == 1)
+    return SetLeftZoneAliveCounterFault(1, enabled);
+  if(counterSource == 2)
+    return SetLeftZoneAliveCounterFault(3, enabled);
+  if(counterSource == 3)
+    return SetLeftZoneAliveCounterFault(4, enabled);
+  if(counterSource == 4)
+    return SetOneboxAliveCounterFault(1, enabled);
+  if(counterSource == 5)
+    return SetOneboxAliveCounterFault(2, enabled);
+  if(counterSource == 6)
+  {
+    @sysvar::Vehicle_input::Message_Counter::SAS_1_0x132 = enabled;
+    return 1;
+  }
+  if(counterSource == 7)
+    return SetAcuAliveCounterFault(1, enabled);
+  if(counterSource == 8)
+    return SetAcuAliveCounterFault(2, enabled);
+  if(counterSource == 9)
+  {
+    @sysvar::Vehicle_input::Message_Counter::RRCR_2_0x4F7 = enabled;
+    return 1;
+  }
+  if(counterSource == 14)
+  {
+    @sysvar::Vehicle_input::Message_Counter::VCU_COM_10_0x38 = enabled;
+    return 1;
+  }
+
+  return 0;
+}
+
+void GetCrcBoundaryMessageName(int crcSource, char messageName[])
+{
+  if(crcSource == 1)
+    snprintf(messageName, elCount(messageName), "FLZCU_1 (0x23B)");
+  else if(crcSource == 2)
+    snprintf(messageName, elCount(messageName), "FRZCU_1 (0x2AB)");
+  else if(crcSource == 3)
+    snprintf(messageName, elCount(messageName), "RZCU_2 (0x2BB)");
+  else if(crcSource == 4)
+    snprintf(messageName, elCount(messageName), "ONEBOX_1 (0x098) CRC1");
+  else if(crcSource == 5)
+    snprintf(messageName, elCount(messageName), "ONEBOX_3 (0x22B) CRC1");
+  else if(crcSource == 6)
+    snprintf(messageName, elCount(messageName), "SAS_1 (0x132)");
+  else if(crcSource == 7)
+    snprintf(messageName, elCount(messageName), "ACU_2 (0x031)");
+  else if(crcSource == 8)
+    snprintf(messageName, elCount(messageName), "ACU_3 (0x021)");
+  else if(crcSource == 9)
+    snprintf(messageName, elCount(messageName), "RRCR_2 (0x4F7)");
+  else if(crcSource == 10)
+    snprintf(messageName, elCount(messageName), "ONEBOX_1 (0x098) CRC2");
+  else if(crcSource == 11)
+    snprintf(messageName, elCount(messageName), "ONEBOX_3 (0x22B) CRC2");
+  else if(crcSource == 12)
+    snprintf(messageName, elCount(messageName), "ONEBOX_3 (0x22B) CRC4");
+  else if(crcSource == 13)
+    snprintf(messageName, elCount(messageName), "VCU_COM_10 (0x038)");
+  else
+    snprintf(messageName, elCount(messageName), "未知CRC来源%d", crcSource);
+}
+dword GetCrcBoundaryDtc(int crcSource)
+{
+  if((crcSource >= 1) && (crcSource <= 3))
+    return kDtcExpectedCodeLeftZoneSignalInvalid;
+  if((crcSource >= 4) && (crcSource <= 5))
+    return kDtcVehicleSpeedSignalInvalid;
+  if((crcSource >= 10) && (crcSource <= 12))
+    return kDtcVehicleSpeedSignalInvalid;
+  if(crcSource == 6)
+    return 0xC42081;
+  if((crcSource >= 7) && (crcSource <= 8))
+    return 0xC45281;
+  if(crcSource == 9)
+    return 0xD43681;
+
+  if(crcSource == 13)
+    return kDtcVcuNetworkSignalInvalid;
+
+  return 0;
+}
+int GetCrcBoundaryCycleMs(int crcSource)
+{
+  if((crcSource >= 1) && (crcSource <= 3))
+    return 20;
+  if((crcSource == 4) || (crcSource == 10))
+    return 10;
+  if((crcSource == 5) || (crcSource == 11) || (crcSource == 12))
+    return 20;
+  if((crcSource >= 6) && (crcSource <= 8))
+    return 10;
+  if(crcSource == 9)
+    return 100;
+
+  if(crcSource == 13)
+    return 10;
+
+  return 0;
+}
+void GetCounterBoundaryMessageName(int counterSource, char messageName[])
+{
+  if(counterSource == 1)
+    snprintf(messageName, elCount(messageName), "FLZCU_1 (0x23B)");
+  else if(counterSource == 2)
+    snprintf(messageName, elCount(messageName), "FRZCU_1 (0x2AB)");
+  else if(counterSource == 3)
+    snprintf(messageName, elCount(messageName), "RZCU_2 (0x2BB)");
+  else if(counterSource == 4)
+    snprintf(messageName, elCount(messageName), "ONEBOX_1 (0x098) RC1");
+  else if(counterSource == 5)
+    snprintf(messageName, elCount(messageName), "ONEBOX_3 (0x22B) RC1");
+  else if(counterSource == 6)
+    snprintf(messageName, elCount(messageName), "SAS_1 (0x132)");
+  else if(counterSource == 7)
+    snprintf(messageName, elCount(messageName), "ACU_2 (0x031)");
+  else if(counterSource == 8)
+    snprintf(messageName, elCount(messageName), "ACU_3 (0x021)");
+  else if(counterSource == 9)
+    snprintf(messageName, elCount(messageName), "RRCR_2 (0x4F7)");
+  else if(counterSource == 14)
+    snprintf(messageName, elCount(messageName), "VCU_COM_10 (0x038)");
+  else
+    snprintf(messageName, elCount(messageName), "未知COUNT来源%d", counterSource);
+}
+
+dword GetCounterBoundaryDtc(int counterSource)
+{
+  if(counterSource == 14)
+    return kDtcVcuNetworkSignalInvalid;
+  return GetCrcBoundaryDtc(counterSource);
+}
+
+int GetCounterBoundaryCycleMs(int counterSource)
+{
+  if(counterSource == 14)
+    return 10;
+  return GetCrcBoundaryCycleMs(counterSource);
+}
+
+// ===== CRC阈值通用流程：清DTC -> 精确注入指定数量的连续CRC错误帧 -> 判定 -> 恢复 =====
+void Impl_Dtc_CrcCycleBoundary_Run(int crcSource, int errorCycles, int expectDtc)
+{
+  dword expectedDtc;
+  int cycleMs;
+  int injectionTimeoutMs;
+  char messageName[64];
+  char caseDescription[160];
+
+  GetCrcBoundaryMessageName(crcSource, messageName);
+  expectedDtc = GetCrcBoundaryDtc(crcSource);
+  cycleMs = GetCrcBoundaryCycleMs(crcSource);
+  if((expectedDtc == 0) || (cycleMs == 0) ||
+     ((errorCycles != 9) && (errorCycles != 10)) ||
+     ((expectDtc != 0) && (expectDtc != 1)))
+  {
+    testStepFail("CRC阈值配置",
+                 "不支持的来源=%d、错误周期数=%d或DTC期望=%d。",
+                 crcSource, errorCycles, expectDtc);
+    return;
+  }
+
+  if(!expectDtc)
+  {
+    testStepWarning("CRC边界用例屏蔽",
+                    "CRC负向阈值用例已屏蔽，仅执行10帧用例。");
+    return;
+  }
+  snprintf(caseDescription, elcount(caseDescription),
+           "%s CRC错误%d周期：DTC 0x%06X。",
+           messageName, errorCycles, expectedDtc);
+  DtcReportCaseTitle("DTC CRC周期阈值", caseDescription);
+  if(!BeginDtcCase(GetDtcRecoverySourceForCrc(crcSource)))
+    return;
+
+  @sysvar::Vehicle_input::Message_CRC::CRC_unchange = 0;
+  if(!SetCrcBoundaryFault(crcSource, 0))
+  {
+    testStepFail("CRC阈值配置",
+                 "故障注入前无法恢复%s的CRC计算。",
+                 messageName);
+    return;
+  }
+
+  testWaitForTimeout(100);
+  // 按实际接收的CRC错误帧数计数，而非按固定时间估算，确保故障窗口准确。
+  gCrcBoundarySource = crcSource;
+  gCrcBoundaryTargetCycles = errorCycles;
+  gCrcBoundaryObservedCycles = 0;
+  gCrcBoundaryComplete = 0;
+  gCrcBoundaryFirstFrameTimestampMs = 0;
+  gCrcBoundaryUnexpectedValidFrameCount = 0;
+  snprintf(gCrcBoundaryMessageName, elcount(gCrcBoundaryMessageName), "%s",
+           messageName);
+  gCrcBoundaryInjectionStarted = 0;
+  gDtcFaultFrameCompletionTimestampMs = 0.0;
+  gDtcFaultFrameCompletionReady = 0;
+  gCrcBoundaryActive = 1;
+
+  @sysvar::Vehicle_input::Message_CRC::CRC_unchange = errorCycles;
+  if(!SetCrcBoundaryFault(crcSource, 1))
+  {
+    gCrcBoundaryActive = 0;
+    @sysvar::Vehicle_input::Message_CRC::CRC_unchange = 0;
+    testStepFail("CRC阈值配置",
+                 "无法启用%s的CRC故障。", messageName);
+    return;
+  }
+
+  testStep("故障注入",
+           "%s：CRC错误注入已启用，目标=%d帧。",
+           messageName, errorCycles);
+
+  injectionTimeoutMs = (errorCycles * cycleMs) + (cycleMs * 2) + 100;
+  // 按实际接收帧计数；等待期间不暂停IL报文，也不改变DBC周期。
+  if(!gCrcBoundaryComplete)
+    testWaitForTextEvent(gDtcFaultCrcBoundaryCompleteEvent, injectionTimeoutMs);
+
+  if(!gCrcBoundaryComplete)
+  {
+    gCrcBoundaryActive = 0;
+    SetCrcBoundaryFault(crcSource, 0);
+    @sysvar::Vehicle_input::Message_CRC::CRC_unchange = 0;
+    testStepFail("故障注入",
+                 "%s：%d ms内仅确认%d/%d个CRC错误帧。",
+                 messageName, injectionTimeoutMs, gCrcBoundaryObservedCycles,
+                 errorCycles);
+    return;
+  }
+
+  // 目标错误帧确认后仅关闭CRC故障注入，IL仍按原DBC周期继续发送报文。
+  SetCrcBoundaryFault(crcSource, 0);
+  @sysvar::Vehicle_input::Message_CRC::CRC_unchange = 0;
+  if(gCrcBoundaryUnexpectedValidFrameCount > 0)
+  {
+    testStepFail("CRC帧校验",
+                 "%s注入期间检测到%d帧CRC正确报文；不能确认连续%d帧CRC错误。",
+                 messageName, gCrcBoundaryUnexpectedValidFrameCount, errorCycles);
+    return;
+  }
+  testStep("故障注入",
+           "%s：已确认%d个接收报文的CRC/校验和错误。",
+           messageName, gCrcBoundaryObservedCycles);
+  WaitAfterFaultFramesBeforeDtcRead(messageName);
+
+
+  if(expectDtc)
+  {
+    if(!CheckCurrentDtc(expectedDtc))
+      return;
+  }
+  else if(!CheckCurrentDtcAbsent(expectedDtc))
+    return;
+
+  SetCrcBoundaryFault(crcSource, 0);
+  @sysvar::Vehicle_input::Message_CRC::CRC_unchange = 0;
+  testStep("故障恢复", "%s CRC/校验和计算已恢复。",
+           messageName);
+}
+
+// ===== COUNT阈值通用流程：清DTC -> 精确注入指定数量的连续冻结帧 -> 判定 -> 恢复 =====
+void Impl_Dtc_CounterCycleBoundary_Run(int counterSource, int errorCycles,
+                                       int expectDtc)
+{
+  dword expectedDtc;
+  int cycleMs;
+  int injectionTimeoutMs;
+  char messageName[64];
+  char caseDescription[160];
+
+  GetCounterBoundaryMessageName(counterSource, messageName);
+  expectedDtc = GetCounterBoundaryDtc(counterSource);
+  cycleMs = GetCounterBoundaryCycleMs(counterSource);
+  if((expectedDtc == 0) || (cycleMs == 0) ||
+     ((errorCycles != 9) && (errorCycles != 10)) ||
+     ((expectDtc != 0) && (expectDtc != 1)))
+  {
+    testStepFail("COUNT阈值配置",
+                 "不支持的来源=%d、错误周期数=%d或DTC期望=%d。",
+                 counterSource, errorCycles, expectDtc);
+    return;
+  }
+
+  if(!expectDtc)
+  {
+    testStepWarning("COUNT边界用例屏蔽",
+                    "COUNT负向阈值用例已屏蔽，仅执行10帧用例。");
+    return;
+  }
+  snprintf(caseDescription, elcount(caseDescription),
+           "%s COUNT冻结%d周期：DTC 0x%06X。",
+           messageName, errorCycles, expectedDtc);
+  DtcReportCaseTitle("DTC COUNT周期阈值", caseDescription);
+  if(!BeginDtcCase(GetDtcRecoverySourceForCounter(counterSource)))
+    return;
+
+  if(!SetCounterBoundaryFault(counterSource, 0))
+  {
+    testStepFail("COUNT阈值配置",
+                 "故障注入前无法恢复%s的COUNT。", messageName);
+    return;
+  }
+
+  gCounterBoundarySource = counterSource;
+  gCounterBoundaryBaselineActive = 1;
+  gCounterBoundaryCounterValueValid = 0;
+  gCounterBoundaryFirstCounter = 0;
+  testWaitForTimeout(100);
+  gCounterBoundaryBaselineActive = 0;
+  gCounterBoundaryTargetCycles = errorCycles;
+  gCounterBoundaryObservedCycles = 0;
+  gCounterBoundaryComplete = 0;
+  gCounterBoundaryFirstFrameTimestampMs = 0.0;
+  gCounterBoundaryCurrentCounter = 0;
+  gCounterBoundaryUnexpectedChangedFrameCount = 0;
+  snprintf(gCounterBoundaryMessageName, elcount(gCounterBoundaryMessageName),
+           "%s", messageName);
+  gDtcFaultFrameCompletionTimestampMs = 0.0;
+  gDtcFaultFrameCompletionReady = 0;
+  gCounterBoundaryActive = 1;
+  @sysvar::Vehicle_input::Message_Counter::Counter_unchange = errorCycles;
+
+  if(!SetCounterBoundaryFault(counterSource, 1))
+  {
+    gCounterBoundaryActive = 0;
+    gCounterBoundaryBaselineActive = 0;
+    @sysvar::Vehicle_input::Message_Counter::Counter_unchange = 0;
+    testStepFail("COUNT阈值配置",
+                 "无法启用%s的COUNT故障。", messageName);
+    return;
+  }
+
+  injectionTimeoutMs = (errorCycles * cycleMs) + (cycleMs * 2) + 100;
+  if(!gCounterBoundaryComplete)
+    testWaitForTextEvent(gDtcFaultCounterBoundaryCompleteEvent, injectionTimeoutMs);
+
+  if(!gCounterBoundaryComplete)
+  {
+    gCounterBoundaryActive = 0;
+    SetCounterBoundaryFault(counterSource, 0);
+    @sysvar::Vehicle_input::Message_Counter::Counter_unchange = 0;
+    testStepFail("故障注入",
+                 "%s：%d ms内仅确认%d/%d个连续冻结COUNT帧，递增或跳变帧=%d。",
+                 messageName, injectionTimeoutMs, gCounterBoundaryObservedCycles,
+                 errorCycles, gCounterBoundaryUnexpectedChangedFrameCount);
+    return;
+  }
+
+  SetCounterBoundaryFault(counterSource, 0);
+  @sysvar::Vehicle_input::Message_Counter::Counter_unchange = 0;
+  if(gCounterBoundaryUnexpectedChangedFrameCount > 0)
+  {
+    testStepFail("COUNT帧校验",
+                 "%s注入期间检测到%d帧递增或跳变COUNT；不能确认连续%d帧冻结。",
+                 messageName, gCounterBoundaryUnexpectedChangedFrameCount,
+                 errorCycles);
+    return;
+  }
+
+  testStep("故障注入",
+           "%s：已确认连续%d个接收报文的COUNT冻结。",
+           messageName, gCounterBoundaryObservedCycles);
+  WaitAfterFaultFramesBeforeDtcRead(messageName);
+
+
+  if(expectDtc)
+  {
+    if(!CheckCurrentDtc(expectedDtc))
+      return;
+  }
+  else if(!CheckCurrentDtcAbsent(expectedDtc))
+    return;
+
+  SetCounterBoundaryFault(counterSource, 0);
+  @sysvar::Vehicle_input::Message_Counter::Counter_unchange = 0;
+  testStep("故障恢复", "%s COUNT已恢复。", messageName);
+}
+
+
+// ACU signal-invalid test entry used by DTC_015.
+void Impl_Dtc_AcuSignalFault_Run(int source, int faultMode)
+{
+  char messageName[64];
+  int recoverySource;
+  int criterion;
+
+  if((source < 1) || (source > 2) || (faultMode != 1))
+  {
+    testStepFail("DTC配置", "不支持的ACU来源=%d或故障模式=%d。", source, faultMode);
+    return;
+  }
+
+  recoverySource = GetDtcRecoverySourceForAcu(source);
+  if(source == 1)
+    criterion = kDtcSignalCriterionAcu2YawValid;
+  else
+    criterion = kDtcSignalCriterionAcu3LongitudinalValid;
+
+  GetAcuMessageName(source, messageName);
+  DtcReportCaseTitle("DTC C45281", "ACU信号无效");
+  if(!BeginDtcSignalInvalidCase(recoverySource, criterion))
+    return;
+
+  if(!SetAcuSignalFault(source, faultMode))
+  {
+    testStepFail("DTC配置", "ACU来源=%d信号无效注入失败。", source);
+    return;
+  }
+
+  CompleteDtcSignalInvalidCase(0xC45281, 10, messageName);
+}
+void Impl_Dtc_AcuDlc_Run(int source)
+{
+  char messageName[64];
+  int cycleMs;
+  int messageId;
+  if((source < 1) || (source > 2))
+  {
+    testStepFail("DTC配置", "不支持的ACU来源=%d。", source);
+    return;
+  }
+
+  GetAcuMessageName(source, messageName);
+  DtcReportCaseTitle("DTC C45281", "ACU DLC故障");
+  if(!BeginDtcCase(GetDtcRecoverySourceForAcu(source)))
+    return;
+
+  cycleMs = 10;
+  messageId = (source == 1) ? 0x031 : 0x021;
+  if(!StartDlcFaultFrameSequence(messageId) ||
+     !WaitForDlcFaultFrameSequence(cycleMs, messageName))
+    return;
+
+  CheckCurrentDtcAndNoCommunicationLoss(0xC45281, kDtcAcuMessageLoss, messageName);
+  testStep("故障恢复", "%s正常报文发送已恢复。", messageName);
+}
+
+// RRCR DLC test entry used by DTC_022.
+void Impl_Dtc_RrcrDlc()
+{
+  char messageName[64];
+
+  DtcReportCaseTitle("DTC D43681", "RRCR_2 DLC故障");
+  if(!BeginDtcCase(kDtcRecoverySourceRrcr2))
+    return;
+  snprintf(messageName, elcount(messageName), "RRCR_2 (0x4F7)");
+  if(!StartDlcFaultFrameSequence(0x4F7) ||
+     !WaitForDlcFaultFrameSequence(100, messageName))
+    return;
+
+  CheckCurrentDtcAndNoCommunicationLoss(0xD43681, kDtcRrcrMessageLoss, messageName);
+  testStep("故障恢复", "RRCR_2正常报文发送已恢复。");
+}
+
+// 压力测试公共入口：四个现有压力用例只传入类型、标题和说明。
+void Impl_Dtc_PressureTest_Run(int pressureType, char caseTitleText[], char description[])
+{
+  float voltageLast;
+  float voltageMin;
+  float voltageMax;
+  long voltageSampleCount;
+
+  DtcReportCaseTitle(caseTitleText, description);
+  gPressureTestStopRequested = 0;
+  if(!DtcFaultControllerStartPressureTest(pressureType))
+  {
+    testStepFail("压力测试", "压力测试启动失败，通常是程控电源未初始化。请检查端口和启用开关。");
+    return;
+  }
+  testStep("压力测试", "压力测试已启动；按x停止。");
+
+  // Only one pressure test runs at a time. Keep the selected test active until x.
+  while(DtcFaultControllerIsPressureTestActive(pressureType) &&
+        !gPressureTestStopRequested)
+  {
+    testWaitForTimeout(100);
+  }
+
+  if(PwrVoltageFluctuationEnabled())
+  {
+    ITECH_GetVoltageStatistics(voltageLast, voltageMin, voltageMax, voltageSampleCount);
+    testStep("程控电源电压",
+             "最后=%.2fV，最小=%.2fV，最大=%.2fV，记录=%ld次，配置范围=%.2f~%.2fV。",
+             voltageLast, voltageMin, voltageMax, voltageSampleCount,
+             PWR_VOLTAGE_LOW, PWR_VOLTAGE_HIGH);
+  }
+
+  DtcFaultControllerShutdown();
+}
+// ===== VXT适配入口：函数名必须与DtcFault.vxt中的case保持一致 =====
+/* Each testcase calls one implementation and restores all DTC inputs afterward. */
+
+
+void SetE2eCrcForVcuCom10Recovery()
+{
+  int i;
+  byte crcData[9];
+
+  crcData[0] = 0x68;
+  crcData[1] = 0x00;
+  for(i = 1; i < 8; i++)
+    crcData[i + 1] = gCommunicationLossRecoveryVcuCom10.byte(i);
+  gCommunicationLossRecoveryVcuCom10.byte(0) = CalculateRrcr2Crc(crcData);
+}
+// T1V兼容适配层：保留既有case入口，内部转发到统一实现。
+int GetDtcRecoverySourceForCounter(int counterSource)
+{
+  if(counterSource == 14)
+    return kDtcRecoverySourceVcuCom10;
+
+  return GetDtcRecoverySourceForCrc(counterSource);
+}
+
+void Impl_Dtc_AliveCounterCycleBoundary_Run(int counterSource,
+                                            int errorCycles, int expectDtc)
+{
+  Impl_Dtc_CounterCycleBoundary_Run(counterSource, errorCycles, expectDtc);
+}
+
+void Impl_Dtc_CommunicationLoss_Run(int faultSource, int durationMs)
+{
+  dword expectedDtc;
+  char messageName[64];
+  char caseDescription[160];
+
+  expectedDtc = GetCommunicationLossDtc(faultSource);
+  GetCommunicationLossMessageName(faultSource, messageName);
+  if((expectedDtc == 0) || (durationMs <= 0))
+  {
+    testStepFail("通讯丢失配置",
+                 "不支持的故障来源=%d或持续时间=%d ms。",
+                 faultSource, durationMs);
+    return;
+  }
+
+  snprintf(caseDescription, elcount(caseDescription),
+           "%s通讯丢失%d ms：DTC 0x%06X。",
+           messageName, durationMs, expectedDtc);
+  DtcReportCaseTitle("DTC通讯丢失", caseDescription);
+  if(!BeginDtcCase(GetDtcRecoverySourceForCommunicationLoss(faultSource)))
+    return;
+
+  if(!SetCommunicationLossFault(faultSource, 1, durationMs))
+  {
+    testStepFail("通讯丢失配置", "无法停止%s报文发送。", messageName);
+    return;
+  }
+
+  testStep("故障注入", "停止%s发送，持续%d ms后读取DTC。",
+           messageName, durationMs);
+  testWaitForTimeout(durationMs);
+  testWaitForTimeout(kDtcFaultObserveTimeMs);
+  if(!CheckCommunicationLossDtc(expectedDtc))
+  {
+    SetCommunicationLossFault(faultSource, 0, 0);
+    return;
+  }
+
+  SetCommunicationLossFault(faultSource, 0, 0);
+  testStep("故障恢复", "%s报文发送已恢复。", messageName);
+}
+
+void Impl_Dtc_VcuDlc_Run()
+{
+  char messageName[64];
+
+  DtcReportCaseTitle("DTC C44381", "VCU控制器网络DLC信号无效");
+  if(!BeginDtcCase(kDtcRecoverySourceVcuCom10))
+    return;
+  if(!gLastVcuCom10Valid)
+  {
+    testStepFail("VCU_COM_10配置",
+                 "未接收到正常VCU_COM_10（0x038）报文。");
+    return;
+  }
+
+  snprintf(messageName, elcount(messageName), "VCU_COM_10 (0x038)");
+  if(!StartDlcFaultFrameSequence(0x038) ||
+     !WaitForDlcFaultFrameSequence(10, messageName))
+    return;
+
+  CheckCurrentDtcAndNoCommunicationLoss(kDtcVcuNetworkSignalInvalid,
+                                        kDtcVcuCommunicationLoss, messageName);
+  testStep("故障恢复", "VCU_COM_10（0x038）已由公共恢复流程恢复。");
+}
+
+void Impl_PressureTest_Run(int pressureType)
+{
+  char caseTitleText[32];
+  char description[64];
+
+  if(pressureType == 1)
+  {
+    snprintf(caseTitleText, elcount(caseTitleText), "STRESS_001");
+    snprintf(description, elcount(description), "电气检查");
+  }
+  else if(pressureType == 2)
+  {
+    snprintf(caseTitleText, elcount(caseTitleText), "STRESS_002");
+    snprintf(description, elcount(description), "报文周期监控");
+  }
+  else if(pressureType == 3)
+  {
+    snprintf(caseTitleText, elcount(caseTitleText), "STRESS_003");
+    snprintf(description, elcount(description), "休眠唤醒循环");
+  }
+  else if(pressureType == 4)
+  {
+    snprintf(caseTitleText, elcount(caseTitleText), "STRESS_004");
+    snprintf(description, elcount(description), "DTC老化");
+  }
+  else
+  {
+    testStepFail("压力测试配置", "不支持的压力测试类型=%d。", pressureType);
+    return;
+  }
+
+  Impl_Dtc_PressureTest_Run(pressureType, caseTitleText, description);
+}
+
+// ===== VXT测试用例入口：只负责传入参数，具体业务逻辑位于上方Impl_*函数 =====
+testcase Generic_UdsRaw(char requestHex[], char expectedHex[], int addressMode)
+{
+  byte requestBytes[512];
+  byte requestMasks[512];
+  byte expectedBytes[512];
+  byte expectedMasks[512];
+  byte responseBytes[512];
+  int requestLength;
+  int expectedLength;
+  int responseLength;
+  int waitResult;
+  int index;
+  long sendResult;
+  diagRequest* request;
+  diagResponse request response;
+
+  diagSetTarget("T1V_G_RLCR");
+  requestLength = DecodeHexBytes(requestHex, requestBytes, requestMasks);
+  if(requestLength <= 0)
+  {
+    testStepFail("UDS请求", "请求数据无效：%s。", requestHex);
+    return;
+  }
+
+  expectedLength = DecodeHexBytes(expectedHex, expectedBytes, expectedMasks);
+  if(expectedLength < 0)
+  {
+    testStepFail("期望响应", "期望响应数据无效：%s。", expectedHex);
+    return;
+  }
+
+  DiagResize(request, requestLength);
+  DiagSetPrimitiveData(request, requestBytes, requestLength);
+
+  if(addressMode == 0)
+    sendResult = diagsendFunctional(request);
+  else
+    sendResult = diagSendRequest(request);
+
+  if(sendResult < 0)
+  {
+    testStepFail("UDS请求", "发送失败，结果=%ld。", sendResult);
+    return;
+  }
+
+  testWaitForDiagRequestSent(request, 100);
+
+  if(expectedLength == 0)
+  {
+    waitResult = testWaitForDiagResponse(request, 2000);
+    if(waitResult == 0)
+      testStepPass("UDS响应", "符合预期，未收到响应。");
+    else
+      testStepFail("UDS响应", "收到非预期诊断响应。");
+    return;
+  }
+
+  waitResult = testWaitForDiagResponse(request, 5000);
+  if(waitResult != 1)
+  {
+    testStepFail("UDS响应", "未收到期望响应，等待结果=%d。", waitResult);
+    return;
+  }
+
+  diagGetLastResponse(request, response);
+  responseLength = diagGetPrimitiveData(response, responseBytes, elcount(responseBytes));
+  if(responseLength != expectedLength)
+  {
+    testStepFail("UDS响应", "响应长度不一致，期望=%d，实际=%d。",
+                 expectedLength, responseLength);
+    return;
+  }
+
+  for(index = 0; index < expectedLength; index++)
+  {
+    if((expectedMasks[index] != 0) && (responseBytes[index] != expectedBytes[index]))
+    {
+      testStepFail("UDS响应", "第%d字节不一致，期望=0x%02X，实际=0x%02X。",
+                   index, expectedBytes[index], responseBytes[index]);
+      return;
+    }
+  }
+
+  testStepPass("UDS响应", "响应符合测试规范。");
+}
+
+testcase Manual_UdsCase(char sourceCase[], char reason[])
+{
+  testStepWarning("人工测试项", "%s：%s", sourceCase, reason);
+}
+
+testcase Dtc_CommunicationLoss_Onebox1()
+{
+  SelectDtcLoggingGroup(1);
+  testCaseTitle("DTC_001", "ONEBOX_1（0x098）通讯丢失");
+
+  if(!ClearAllDtcs())
+    return;
+
+  testStepPass("已确认清除DTC",
+               "已收到最终54肯定响应，开始注入0x098故障。");
+  // 0表示ONEBOX_1（0x098）报文。
+  // 停止发送报文500ms，用于验证普通通讯丢失DTC。
+  @sysvar::Vehicle_input::MSG::ONEBOX_1_0x98 = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::ONEBOX_1_0x98 = kDtcFaultInjectDurationMs;
+  testWaitForTimeout(100);
+
+  testStep("故障注入", "停止ONEBOX_1（0x098）发送，持续%d ms。",
+           kDtcFaultInjectDurationMs);
+  @sysvar::Vehicle_input::MSG::ONEBOX_1_0x98 = 1;
+  testWaitForTimeout(kDtcFaultInjectDurationMs);
+  testStep("故障观察", "报文丢失结束，观察DTC状态%d ms。",
+           kDtcFaultObserveTimeMs);
+  testWaitForTimeout(kDtcFaultObserveTimeMs);
+
+  ConfigureDtcReadRecovery(kDtcRecoverySourceOnebox1);
+  CheckCurrentDtc(kDtcOneboxMessageLoss);
+
+  @sysvar::Vehicle_input::MSG::ONEBOX_1_0x98 = 0;
+  @sysvar::Vehicle_input::Message_MissingTime::ONEBOX_1_0x98 = 0;
+  testStep("故障恢复", "ONEBOX_1（0x098）报文发送已恢复。");
+}
+
+testcase Dtc_SignalInvalid_LeftZoneCrc()
+{
+  // FLZCU_1（0x23B）必须实际收到10帧CRC错误后才能读取DTC。
+  Impl_Dtc_CrcCycleBoundary_Run(1, kDtcNormalCrcFaultFrameCount, 1);
+}
+
+testcase Dtc_SignalInvalid_RrcrCrc()
+{
+  // RRCR_2（0x4F7）必须实际收到10帧CRC错误后才能读取DTC。
+  Impl_Dtc_CrcCycleBoundary_Run(9, kDtcNormalCrcFaultFrameCount, 1);
+}
+
+testcase Dtc_LeftZoneCrc_Run(int source)
+{
+  int crcSource;
+
+  if(source == 1)
+    crcSource = 1;
+  else if(source == 3)
+    crcSource = 2;
+  else if(source == 4)
+    crcSource = 3;
+  else
+    crcSource = 0;
+
+  if(crcSource == 0)
+  {
+    testStepFail("DTC配置", "不支持的左区域CRC来源=%d。", source);
+    return;
+  }
+
+  Impl_Dtc_CrcCycleBoundary_Run(crcSource, kDtcNormalCrcFaultFrameCount, 1);
+}
+
+testcase Dtc_LeftZoneAliveCounter_Run(int source)
+{
+  int counterSource;
+
+  if(source == 1)
+    counterSource = 1;
+  else if(source == 3)
+    counterSource = 2;
+  else if(source == 4)
+    counterSource = 3;
+  else
+    counterSource = 0;
+
+  if(counterSource == 0)
+  {
+    testStepFail("DTC配置", "不支持的左区域COUNT来源=%d。", source);
+    return;
+  }
+
+  Impl_Dtc_AliveCounterCycleBoundary_Run(counterSource, 10, 1);
+}
+
+testcase Dtc_OneboxCrc_Run(int source)
+{
+  int crcSource;
+
+  crcSource = GetOneboxCrcBoundarySource(source);
+  if(crcSource == 0)
+  {
+    testStepFail("DTC配置", "不支持的ONEBOX CRC来源=%d。", source);
+    return;
+  }
+
+  Impl_Dtc_CrcCycleBoundary_Run(crcSource, kDtcNormalCrcFaultFrameCount, 1);
+}
+
+testcase Dtc_OneboxAliveCounter_Run(int source)
+{
+  int counterSource;
+
+  counterSource = GetOneboxCounterBoundarySource(source);
+  if(counterSource == 0)
+  {
+    testStepFail("DTC配置", "不支持的ONEBOX COUNT来源=%d。", source);
+    return;
+  }
+
+  Impl_Dtc_AliveCounterCycleBoundary_Run(counterSource, 10, 1);
+}
+
+testcase Dtc_SasCrc()
+{
+  // SAS_1（0x132）必须实际收到10帧CRC错误后才能读取DTC。
+  Impl_Dtc_CrcCycleBoundary_Run(6, kDtcNormalCrcFaultFrameCount, 1);
+}
+
+testcase Dtc_SasAliveCounter()
+{
+  // SAS_1（0x132）必须实际收到10帧COUNT错误后才能读取DTC。
+  Impl_Dtc_AliveCounterCycleBoundary_Run(6, 10, 1);
+}
+
+testcase Dtc_AcuCrc_Run(int source)
+{
+  int crcSource;
+
+  if(source == 1)
+    crcSource = 7;
+  else if(source == 2)
+    crcSource = 8;
+  else
+    crcSource = 0;
+
+  if(crcSource == 0)
+  {
+    testStepFail("DTC配置", "不支持的ACU CRC来源=%d。", source);
+    return;
+  }
+
+  Impl_Dtc_CrcCycleBoundary_Run(crcSource, kDtcNormalCrcFaultFrameCount, 1);
+}
+
+testcase Dtc_AcuAliveCounter_Run(int source)
+{
+  int counterSource;
+
+  if(source == 1)
+    counterSource = 7;
+  else if(source == 2)
+    counterSource = 8;
+  else
+    counterSource = 0;
+
+  if(counterSource == 0)
+  {
+    testStepFail("DTC配置", "不支持的ACU COUNT来源=%d。", source);
+    return;
+  }
+
+  Impl_Dtc_AliveCounterCycleBoundary_Run(counterSource, 10, 1);
+}
+
+testcase Dtc_RrcrAliveCounter()
+{
+  // RRCR_2（0x4F7）必须实际收到10帧COUNT错误后才能读取DTC。
+  Impl_Dtc_AliveCounterCycleBoundary_Run(9, 10, 1);
+}
+
+testcase DTC_SESSION_START_Dtc_AutomaticSession_Start()
+{
+  Impl_Dtc_AutomaticSession_Start();
+}
+
+testcase DTC_BND_COM_001_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_001 - 0x098 总线实测丢失490ms，不报DTC C12987");
+  // 0 表示 ONEBOX_1（0x098） 报文。
+  // 停止发送报文490 ms，用于验证通讯丢失DTC不应产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(0, 490, 0);
+  StopToLogging();
+}
+
+testcase DTC_BND_COM_002_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_002 - 0x098 总线实测丢失510ms，报DTC C12987");
+  // 0 表示 ONEBOX_1（0x098） 报文。
+  // 停止发送报文510 ms，用于验证通讯丢失DTC应正常产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(0, 510, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_COM_003_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_003 - 0x132 总线实测丢失490ms，不报DTC C13187");
+  // 1 表示 SAS_1（0x132） 报文。
+  // 停止发送报文490 ms，用于验证通讯丢失DTC不应产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(1, 490, 0);
+  StopToLogging();
+}
+
+testcase DTC_BND_COM_004_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_004 - 0x132 总线实测丢失510ms，报DTC C13187");
+  // 1 表示 SAS_1（0x132） 报文。
+  // 停止发送报文510 ms，用于验证通讯丢失DTC应正常产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(1, 510, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_COM_005_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_005 - 0x021 总线实测丢失490ms，不报DTC C15187");
+  // 2 表示 ACU_3（0x021） 报文。
+  // 停止发送报文490 ms，用于验证通讯丢失DTC不应产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(2, 490, 0);
+  StopToLogging();
+}
+
+testcase DTC_BND_COM_006_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_006 - 0x021 总线实测丢失510ms，报DTC C15187");
+  // 2 表示 ACU_3（0x021） 报文。
+  // 停止发送报文510 ms，用于验证通讯丢失DTC应正常产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(2, 510, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_COM_007_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_007 - 0x4F7 总线实测丢失1990ms，不报DTC D16987");
+  // 3 表示 RRCR_2（0x4F7） 报文。
+  // 停止发送报文1990 ms，用于验证通讯丢失DTC不应产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(3, 1990, 0);
+  StopToLogging();
+}
+
+testcase DTC_BND_COM_008_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_008 - 0x4F7 总线实测丢失2100ms，报DTC D16987");
+  // 3 表示 RRCR_2（0x4F7） 报文。
+  // 停止发送报文2100 ms，用于验证通讯丢失DTC应正常产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(3, 2100, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_COM_009_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_009 - 0x510 总线实测丢失3990ms，不报DTC C24587");
+  // 4 表示 ICC_COM_8（0x510） 报文。
+  // 停止发送报文3990 ms，用于验证通讯丢失DTC不应产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(4, 3990, 0);
+  StopToLogging();
+}
+
+testcase DTC_BND_COM_010_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_010 - 0x510 总线实测丢失4100ms，报DTC C24587");
+  // 4 表示 ICC_COM_8（0x510） 报文。
+  // 停止发送报文4100 ms，用于验证通讯丢失DTC应正常产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(4, 4100, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_COM_011_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_011 - 0x23B 总线实测丢失490ms，不报DTC C14187");
+  // 5 表示 FLZCU_1（0x23B） 报文。
+  // 停止发送报文490 ms，用于验证通讯丢失DTC不应产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(5, 490, 0);
+  StopToLogging();
+}
+
+testcase DTC_BND_COM_012_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_012 - 0x23B 总线实测丢失510ms，报DTC C14187");
+  // 5 表示 FLZCU_1（0x23B） 报文。
+  // 停止发送报文510 ms，用于验证通讯丢失DTC应正常产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(5, 510, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_COM_013_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_013 - 0x038 总线实测丢失490ms，不报DTC C14087");
+  // 6 表示 VCU_COM_10（0x038） 报文。
+  // 停止发送报文490 ms，用于验证通讯丢失DTC不应产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(6, 490, 0);
+  StopToLogging();
+}
+
+testcase DTC_BND_COM_014_Dtc_CommunicationLossBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_COM_014 - 0x038 总线实测丢失510ms，报DTC C14087");
+  // 6 表示 VCU_COM_10（0x038） 报文。
+  // 停止发送报文510 ms，用于验证通讯丢失DTC应正常产生。
+  Impl_Dtc_CommunicationLossBoundary_Run(6, 510, 1);
+  StopToLogging();
+}
+
+testcase DTC_C14087_Dtc_CommunicationLoss_Run()
+{
+  // 6 表示 VCU_COM_10（0x038） 报文。
+  // 停止发送报文500 ms，用于验证普通通讯丢失DTC。
+  Impl_Dtc_CommunicationLoss_Run(6, 500);
+}
+
+testcase DTC_001_Dtc_SignalInvalid_VehicleSpeed()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_001 - 0x098 车速信号无效，连续10帧，检查DTC C41881");
+  Impl_Dtc_SignalInvalid_VehicleSpeed();
+  StopToLogging();
+}
+
+testcase DTC_002_Dtc_SignalInvalid_VehicleSpeedRaw()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_002 - 0x098 车速无效值0x1FFF，连续10帧，检查DTC C41881");
+  Impl_Dtc_SignalInvalid_VehicleSpeedRaw();
+  StopToLogging();
+}
+
+testcase DTC_003_Dtc_OneboxSignalFault_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_003 - 0x22B 任意信号无效，连续10帧，检查DTC C41881");
+  Impl_Dtc_OneboxSignalFault_Run(2, 1);
+  StopToLogging();
+}
+
+testcase DTC_004_Dtc_OneboxSignalFault_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_004 - 0x098 车速信号无效，连续10帧，检查DTC C41881");
+  Impl_Dtc_OneboxSignalFault_Run(1, 1);
+  StopToLogging();
+}
+
+testcase DTC_005_Dtc_OneboxDlc_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_005 - 0x098 DLC错误，连续10帧，检查DTC C41881");
+  Impl_Dtc_OneboxDlc_Run(1);
+  StopToLogging();
+}
+
+testcase DTC_006_Dtc_OneboxDlc_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_006 - 0x22B DLC错误，连续10帧，检查DTC C41881");
+  Impl_Dtc_OneboxDlc_Run(2);
+  StopToLogging();
+}
+
+testcase DTC_BND_CRC_002_Dtc_CrcCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CRC_002 - 0x098 CRC错误，连续10帧，检查DTC C41881");
+  // 4 表示 ONEBOX_1（0x098） 的 CRC1 信号。
+  // 连续注入10 个CRC错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_CrcCycleBoundary_Run(4, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_CRC_004_Dtc_CrcCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CRC_004 - 0x22B CRC错误，连续10帧，检查DTC C41881");
+  // 5 表示 ONEBOX_3（0x22B） 的 CRC1 信号。
+  // 连续注入10 个CRC错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_CrcCycleBoundary_Run(5, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_CNT_002_Dtc_AliveCounterCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CNT_002 - 0x098 COUNT错误，连续10帧，检查DTC C41881");
+  // 4 表示 ONEBOX_1（0x098） 的 COUNT 信号。
+  // 连续注入10 个COUNT错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_AliveCounterCycleBoundary_Run(4, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_CNT_004_Dtc_AliveCounterCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CNT_004 - 0x22B COUNT错误，连续10帧，检查DTC C41881");
+  // 5 表示 ONEBOX_3（0x22B） 的 COUNT 信号。
+  // 连续注入10 个COUNT错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_AliveCounterCycleBoundary_Run(5, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_007_Dtc_SignalInvalid_Eps()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_007 - 0x132 转向角无效值0xFFFF，连续10帧，检查DTC C42081");
+  Impl_Dtc_SignalInvalid_Eps();
+  StopToLogging();
+}
+
+testcase DTC_008_Dtc_SignalInvalid_EpsValidBit()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_008 - 0x132 转向角有效位无效（0x1），连续10帧，检查DTC C42081");
+  Impl_Dtc_SignalInvalid_EpsValidBit();
+  StopToLogging();
+}
+
+testcase DTC_009_Dtc_SignalInvalid_EpsSpeedValidBit()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_009 - 0x132 转向角速度有效位无效（0x1），连续10帧，检查DTC C42081");
+  Impl_Dtc_SignalInvalid_EpsSpeedValidBit();
+  StopToLogging();
+}
+
+testcase DTC_010_Dtc_SasDlc()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_010 - 0x132 DLC错误，连续10帧，检查DTC C42081");
+  Impl_Dtc_SasDlc();
+  StopToLogging();
+}
+
+testcase DTC_BND_CRC_006_Dtc_CrcCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CRC_006 - 0x132 CRC错误，连续10帧，检查DTC C42081");
+  // 6 表示 SAS_1（0x132） 的 CRC 信号。
+  // 连续注入10 个CRC错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_CrcCycleBoundary_Run(6, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_CNT_006_Dtc_AliveCounterCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CNT_006 - 0x132 COUNT错误，连续10帧，检查DTC C42081");
+  // 6 表示 SAS_1（0x132） 的 COUNT 信号。
+  // 连续注入10 个COUNT错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_AliveCounterCycleBoundary_Run(6, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_011_Dtc_SignalInvalid_Acu()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_011 - 0x021 ACU_3纵向加速度有效位VD=2无效，连续10帧，检查DTC C45281");
+  Impl_Dtc_SignalInvalid_Acu();
+  StopToLogging();
+}
+
+testcase DTC_012_Dtc_SignalInvalid_AcuLateralAcceleration()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_012 - 0x031 ACU_2横向加速度原始值0xFFFF，连续10帧，检查DTC C45281");
+  Impl_Dtc_SignalInvalid_AcuLateralAcceleration();
+  StopToLogging();
+}
+
+testcase DTC_013_Dtc_SignalInvalid_AcuYawRate()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_013 - 0x031 ACU_2横摆角速度原始值0xFFFF，连续10帧，检查DTC C45281");
+  Impl_Dtc_SignalInvalid_AcuYawRate();
+  StopToLogging();
+}
+
+testcase DTC_014_Dtc_SignalInvalid_AcuLongitudinalAcceleration()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_014 - 0x021 ACU_3纵向加速度原始值0xFFFF，连续10帧，检查DTC C45281");
+  Impl_Dtc_SignalInvalid_AcuLongitudinalAcceleration();
+  StopToLogging();
+}
+
+testcase DTC_015_Dtc_AcuSignalFault_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_015 - 0x031 任意信号无效，连续10帧，检查DTC C45281");
+  Impl_Dtc_AcuSignalFault_Run(1, 1);
+  StopToLogging();
+}
+
+testcase DTC_016_Dtc_AcuDlc_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_016 - 0x031 DLC错误，连续10帧，检查DTC C45281");
+  Impl_Dtc_AcuDlc_Run(1);
+  StopToLogging();
+}
+
+testcase DTC_017_Dtc_AcuDlc_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_017 - 0x021 DLC错误，连续10帧，检查DTC C45281");
+  Impl_Dtc_AcuDlc_Run(2);
+  StopToLogging();
+}
+
+testcase DTC_BND_CRC_008_Dtc_CrcCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CRC_008 - 0x031 CRC错误，连续10帧，检查DTC C45281");
+  // 7 表示 ACU_2（0x031） 的 CRC 信号。
+  // 连续注入10 个CRC错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_CrcCycleBoundary_Run(7, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_CRC_010_Dtc_CrcCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CRC_010 - 0x021 CRC错误，连续10帧，检查DTC C45281");
+  // 8 表示 ACU_3（0x021） 的 CRC 信号。
+  // 连续注入10 个CRC错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_CrcCycleBoundary_Run(8, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_CNT_008_Dtc_AliveCounterCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CNT_008 - 0x031 COUNT错误，连续10帧，检查DTC C45281");
+  // 7 表示 ACU_2（0x031） 的 COUNT 信号。
+  // 连续注入10 个COUNT错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_AliveCounterCycleBoundary_Run(7, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_CNT_010_Dtc_AliveCounterCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CNT_010 - 0x021 COUNT错误，连续10帧，检查DTC C45281");
+  // 8 表示 ACU_3（0x021） 的 COUNT 信号。
+  // 连续注入10 个COUNT错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_AliveCounterCycleBoundary_Run(8, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_018_Dtc_LeftZoneSignalInvalid_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_018 - 0x49D 任意信号无效，连续10帧，检查DTC C44481");
+  Impl_Dtc_LeftZoneSignalInvalid_Run(2, 1);
+  StopToLogging();
+}
+
+testcase DTC_019_Dtc_LeftZoneDlc_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_019 - 0x49D DLC错误，连续10帧，检查DTC C44481");
+  Impl_Dtc_LeftZoneDlc_Run(2);
+  StopToLogging();
+}
+
+testcase DTC_020_Dtc_LeftZoneDlc_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_020 - 0x2AB DLC错误，连续10帧，检查DTC C44481");
+  Impl_Dtc_LeftZoneDlc_Run(3);
+  StopToLogging();
+}
+
+testcase DTC_021_Dtc_LeftZoneDlc_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_021 - 0x2BB DLC错误，连续10帧，检查DTC C44481");
+  Impl_Dtc_LeftZoneDlc_Run(4);
+  StopToLogging();
+}
+
+testcase DTC_BND_CRC_012_Dtc_CrcCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CRC_012 - 0x23B CRC错误，连续10帧，检查DTC C44481");
+  // 1 表示 FLZCU_1（0x23B） 的 CRC 信号。
+  // 连续注入10 个CRC错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_CrcCycleBoundary_Run(1, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_CRC_014_Dtc_CrcCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CRC_014 - 0x2AB CRC错误，连续10帧，检查DTC C44481");
+  // 2 表示 FRZCU_1（0x2AB） 的 CRC 信号。
+  // 连续注入10 个CRC错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_CrcCycleBoundary_Run(2, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_CRC_016_Dtc_CrcCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CRC_016 - 0x2BB CRC错误，连续10帧，检查DTC C44481");
+  // 3 表示 RZCU_2（0x2BB） 的 CRC 信号。
+  // 连续注入10 个CRC错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_CrcCycleBoundary_Run(3, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_CNT_012_Dtc_AliveCounterCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CNT_012 - 0x23B COUNT错误，连续10帧，检查DTC C44481");
+  // 1 表示 FLZCU_1（0x23B） 的 COUNT 信号。
+  // 连续注入10 个COUNT错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_AliveCounterCycleBoundary_Run(1, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_CNT_014_Dtc_AliveCounterCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CNT_014 - 0x2AB COUNT错误，连续10帧，检查DTC C44481");
+  // 2 表示 FRZCU_1（0x2AB） 的 COUNT 信号。
+  // 连续注入10 个COUNT错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_AliveCounterCycleBoundary_Run(2, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_BND_CNT_016_Dtc_AliveCounterCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CNT_016 - 0x2BB COUNT错误，连续10帧，检查DTC C44481");
+  // 3 表示 RZCU_2（0x2BB） 的 COUNT 信号。
+  // 连续注入10 个COUNT错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_AliveCounterCycleBoundary_Run(3, 10, 1);
+  StopToLogging();
+}
+
+
+testcase DTC_BND_CRC_018_Dtc_CrcCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CRC_018 - 0x4F7 CRC错误，连续10帧，检查DTC D43681");
+  // 9 表示 RRCR_2（0x4F7） 的 CRC 信号。
+  // 连续注入10 个CRC错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_CrcCycleBoundary_Run(9, 10, 1);
+  StopToLogging();
+}
+
+
+testcase DTC_BND_CRC_020_Dtc_CrcCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CRC_020 - 0x098 CRC2错误，连续10帧，检查DTC C41881");
+  // 10 表示 ONEBOX_1（0x098） 的 CRC2 信号。
+  // 连续注入10 个CRC错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_CrcCycleBoundary_Run(10, 10, 1);
+  StopToLogging();
+}
+
+
+testcase DTC_BND_CRC_022_Dtc_CrcCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CRC_022 - 0x22B CRC2错误，连续10帧，检查DTC C41881");
+  // 11 表示 ONEBOX_3（0x22B） 的 CRC2 信号。
+  // 连续注入10 个CRC错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_CrcCycleBoundary_Run(11, 10, 1);
+  StopToLogging();
+}
+
+
+testcase DTC_BND_CRC_024_Dtc_CrcCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CRC_024 - 0x22B CRC4错误，连续10帧，检查DTC C41881");
+  // 12 表示 ONEBOX_3（0x22B） 的 CRC4 信号。
+  // 连续注入10 个CRC错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_CrcCycleBoundary_Run(12, 10, 1);
+  StopToLogging();
+}
+
+
+testcase DTC_BND_CRC_026_Dtc_CrcCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CRC_026 - 0x038 CRC错误，连续10帧，检查DTC C44381");
+  // 13 表示 VCU_COM_10（0x038） 的 CRC 信号。
+  // 连续注入10 个CRC错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_CrcCycleBoundary_Run(13, 10, 1);
+  StopToLogging();
+}
+
+
+testcase DTC_BND_CNT_020_Dtc_AliveCounterCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CNT_020 - 0x038 COUNT错误，连续10帧，检查DTC C44381");
+  // 14 表示 VCU_COM_10（0x038） 的 COUNT 信号。
+  // 连续注入10 个COUNT错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_AliveCounterCycleBoundary_Run(14, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_022_Dtc_RrcrDlc()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_022 - 0x4F7 DLC错误，连续10帧，检查DTC D43681");
+  Impl_Dtc_RrcrDlc();
+  StopToLogging();
+}
+
+testcase DTC_023_Dtc_VcuDlc_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_023 - 0x038 DLC错误，连续10帧，检查DTC C44381");
+  Impl_Dtc_VcuDlc_Run();
+  StopToLogging();
+}
+
+
+testcase DTC_BND_CNT_018_Dtc_AliveCounterCycleBoundary_Run()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("DTC_BND_CNT_018 - 0x4F7 COUNT错误，连续10帧，检查DTC D43681");
+  // 9 表示 RRCR_2（0x4F7） 的 COUNT 信号。
+  // 连续注入10 个COUNT错误帧，用于验证DTC应正常产生。
+  Impl_Dtc_AliveCounterCycleBoundary_Run(9, 10, 1);
+  StopToLogging();
+}
+
+testcase DTC_SESSION_STOP_Dtc_AutomaticSession_Stop()
+{
+  Impl_Dtc_AutomaticSession_Stop();
+}
+
+testcase STRESS_001_PressureTest_Electrical()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("STRESS_001 - 电气检查");
+  Impl_PressureTest_Run(1);
+  StopToLogging();
+}
+
+testcase STRESS_002_PressureTest_MessageCycle()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("STRESS_002 - 报文周期监控");
+  Impl_PressureTest_Run(2);
+  StopToLogging();
+}
+
+testcase STRESS_003_PressureTest_SleepWake()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("STRESS_003 - 休眠唤醒循环");
+  Impl_PressureTest_Run(3);
+  StopToLogging();
+}
+
+testcase STRESS_004_PressureTest_DtcAging()
+{
+  InitReportAndLog("DtcFault_report");
+  StartToLogging();
+  SetDtcReportDisplayTitle("STRESS_004 - DTC老化");
+  Impl_PressureTest_Run(4);
+  StopToLogging();
+}

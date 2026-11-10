@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<testmodule title="NM网络管理测试" version="2.0">
+  <description>依据 T1V-C 网络管理测试用例实现。NM_Test.can 独立发送 0x601；仅在 PowerMode、DOW 或设防清理步骤发送 0x49D。执行时关闭其他节点的同报文仿真。</description>
+  <testgroup title="NM网络管理测试">
+    <testgroup title="0.报告与仿真自检">
+      <capltestcase name="Nm_AutomaticSession_Start" title="NM_SESSION_START | 初始化HTML报告和日志"/>
+    </testgroup>
+
+    <testgroup title="1.休眠、RMS与NOS状态">
+      <capltestcase name="NM_TC01_BsmDiagnosticNoWake" title="T1V-C-NM-TC1-1 | BSM下诊断不唤醒"/>
+      <capltestcase name="NM_TC01_BsmPowerModeNoWake" title="T1V-C-NM-TC1-2 | BSM下PowerMode ON不唤醒"/>
+      <capltestcase name="NM_TC02_PbsmToRmsByNm" title="T1V-C-NM-TC2 | PBSM到RMS: 两帧0x601唤醒"/>
+      <capltestcase name="NM_TC03_RmsToNosByDiag" title="T1V-C-NM-TC3 | RMS到NOS: 诊断保持"/>
+      <capltestcase name="NM_TC04_RmsToNosByPowerMode" title="T1V-C-NM-TC4 | RMS到NOS: PowerMode保持"/>
+      <capltestcase name="NM_TC05_RmsToRss" title="T1V-C-NM-TC5 | RMS到RSS"/>
+    </testgroup>
+
+    <testgroup title="2.RSS、PBSM与总线休眠">
+      <capltestcase name="NM_TC06_NosToRssByDow" title="T1V-C-NM-TC6 | NOS到RSS: DOW 210秒保持"/>
+      <capltestcase name="NM_TC07_RmsTimeoutDiagHold" title="T1V-C-NM-TC7-1 | RMS超时后诊断保持"/>
+      <capltestcase name="NM_TC07_RmsTimeoutPowerModeHold" title="T1V-C-NM-TC7-2 | RMS超时后ON保持"/>
+      <capltestcase name="NM_TC08_RssToNosByPowerMode" title="T1V-C-NM-TC8 | RSS到NOS: PowerMode保持"/>
+      <capltestcase name="NM_TC09_RssToPbsm" title="T1V-C-NM-TC9 | RSS到PBSM"/>
+      <capltestcase name="NM_TC10_PbsmToBusSleep" title="T1V-C-NM-TC10 | PBSM到总线休眠错误帧时序"/>
+      <capltestcase name="NM_TC11_PbsmToRmsByNm" title="T1V-C-NM-TC11 | PBSM到RMS: 两帧0x601唤醒"/>
+      <capltestcase name="NM_TC12_PbsmDiagAndPowerModeNoWake" title="T1V-C-NM-TC12 | PBSM下诊断和PowerMode ON不唤醒"/>
+    </testgroup>
+
+    <testgroup title="3.NM属性与网络唤醒">
+      <capltestcase name="NM_TC13_NmPduAttributes" title="T1V-C-NM-TC13 | NM报文DLC和源节点ID"/>
+      <capltestcase name="NM_TC14_NetworkWakeupResponse" title="T1V-C-NM-TC14 | 网络唤醒响应时间"/>
+      <capltestcase name="NM_TC15_InvalidWakeupRejected" title="T1V-C-NM-TC15 | 无效0x123唤醒拒绝"/>
+      <capltestcase name="NM_TC16_ValidWakeupAfterInvalid" title="T1V-C-NM-TC16 | 无效事件后有效NM唤醒"/>
+    </testgroup>
+
+    <testgroup title="4.网络保持与DOW">
+      <capltestcase name="NM_TC17_DiagnosticNetworkKeepAlive" title="T1V-C-NM-TC17 | 诊断网络保持"/>
+      <capltestcase name="NM_TC18_PowerModeNetworkKeepAlive" title="T1V-C-NM-TC18 | PowerMode ON网络保持"/>
+      <capltestcase name="NM_TC19_Dow210SecondHold" title="T1V-C-NM-TC19 | DOW 210秒保持后进入总线休眠"/>
+    </testgroup>
+
+    <testgroup title="5.用户数据与其他ECU报文">
+      <capltestcase name="NM_TC20_NmUserData" title="T1V-C-NM-TC20 | 0x63F用户数据状态位"/>
+      <capltestcase name="NM_TC21_RssOtherEcuTraffic" title="T1V-C-NM-TC21 | RSS下其他ECU报文"/>
+      <capltestcase name="NM_TC22_NosOtherEcuTraffic" title="T1V-C-NM-TC22 | NOS下0x601报文"/>
+      <capltestcase name="NM_TC23_RmrHandling" title="T1V-C-NM-TC23 | RMR=1处理"/>
+    </testgroup>
+
+    <testgroup title="6.报告与日志">
+      <capltestcase name="Nm_AutomaticSession_Stop" title="NM_SESSION_STOP | 停止会话日志"/>
+    </testgroup>
+  </testgroup>
+</testmodule>

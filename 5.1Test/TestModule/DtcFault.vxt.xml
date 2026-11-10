@@ -1,0 +1,378 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<testmodule starttime="2026-10-13 16:49:31" timestamp="   2.712522" verdicts="2_basic">
+  <testgroup>
+    <testgroup>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_001 - 0x098 总线实测丢失490ms，不报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_002 - 0x098 总线实测丢失510ms，报DTC</title>
+      </skipped>
+      <title>1.C12987 - 集成制动控制器通讯丢失</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_003 - 0x132 总线实测丢失490ms，不报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_004 - 0x132 总线实测丢失510ms，报DTC</title>
+      </skipped>
+      <title>2.C13187 - 电动助力转向控制器通讯丢失</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_005 - 0x021 总线实测丢失490ms，不报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_006 - 0x021 总线实测丢失510ms，报DTC</title>
+      </skipped>
+      <title>3.C15187 - 气囊控制器通讯丢失</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_007 - 0x4F7 总线实测丢失1990ms，不报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_008 - 0x4F7 总线实测丢失2100ms，报DTC</title>
+      </skipped>
+      <title>4.D16987 - 后右角雷达通讯丢失</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_009 - 0x510 总线实测丢失3990ms，不报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_010 - 0x510 总线实测丢失4100ms，报DTC</title>
+      </skipped>
+      <title>5.C24587 - 信息计算中心通讯丢失</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_011 - 0x23B 总线实测丢失490ms，不报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_012 - 0x23B 总线实测丢失510ms，报DTC</title>
+      </skipped>
+      <title>6.C14187 - 左区域控制器通讯丢失</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_013 - 0x038 总线实测丢失490ms，不报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_COM_014 - 0x038 总线实测丢失510ms，报DTC</title>
+      </skipped>
+      <title>7.C14087 - 与VCU控制器失去通讯</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CRC_026 - 0x038 CRC错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CNT_020 - 0x038 COUNT错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_023 - 0x038 DLC错误，连续10周期</title>
+      </skipped>
+      <title>8.C44381 - VCU控制器网络信号无效</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_001 - 0x098 车速信号无效</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_002 - 0x098 车速无效值0x1FFF</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_003 - 0x22B 任意信号无效，连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_004 - 0x098 车速信号无效，连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_005 - 0x098 DLC错误，连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_006 - 0x22B DLC错误，连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CRC_002 - 0x098 CRC错误10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CRC_004 - 0x22B CRC错误10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CRC_020 - 0x098 CRC2错误10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CRC_022 - 0x22B CRC2错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CRC_024 - 0x22B CRC4错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CNT_002 - 0x098 COUNT错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CNT_004 - 0x22B COUNT错误10周期，报DTC</title>
+      </skipped>
+      <title>9.C41881 - 集成制动控制器车速信号无效</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_007 - 0x132 转向角无效值0xFFFF</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_008 - 0x132 转向角有效位无效（0x1），连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_009 - 0x132 转向角速度有效位无效（0x1），连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_010 - 0x132 DLC错误，连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CRC_006 - 0x132 CRC错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CNT_006 - 0x132 COUNT错误10周期，报DTC</title>
+      </skipped>
+      <title>10.C42081 - 电动助力转向控制器网络信号无效</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_011 - 0x021 ACU_3纵向加速度有效位VD=2无效，连续10帧，检查DTC C45281</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_012 - 0x031 ACU_2横向加速度原始值0xFFFF，连续10帧，检查DTC C45281</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_013 - 0x031 ACU_2横摆角速度原始值0xFFFF，连续10帧，检查DTC C45281</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_014 - 0x021 ACU_3纵向加速度原始值0xFFFF，连续10帧，检查DTC C45281</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_015 - 0x031 任意信号无效，连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_016 - 0x031 DLC错误，连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_017 - 0x021 DLC错误，连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CRC_008 - 0x031 CRC错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CRC_010 - 0x021 CRC错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CNT_008 - 0x031 COUNT错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CNT_010 - 0x021 COUNT错误10周期，报DTC</title>
+      </skipped>
+      <title>11.C45281 - 气囊纵向加速度信号无效</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_018 - 0x49D 任意信号无效，连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_019 - 0x49D DLC错误，连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_020 - 0x2AB DLC错误，连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_021 - 0x2BB DLC错误，连续10周期</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CRC_012 - 0x23B CRC错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CRC_014 - 0x2AB CRC错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CRC_016 - 0x2BB CRC错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CNT_012 - 0x23B COUNT错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CNT_014 - 0x2AB COUNT错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CNT_016 - 0x2BB COUNT错误10周期，报DTC</title>
+      </skipped>
+      <title>12.C44481 - 左区域控制器网络信号无效</title>
+    </testgroup>
+    <testgroup>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CRC_018 - 0x4F7 CRC错误10周期，报DTC</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_022 - 0x4F7 DLC错误，连续10帧</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <title>DTC_BND_CNT_018 - 0x4F7 COUNT错误10周期，报DTC</title>
+      </skipped>
+      <title>13.D43681 - 后右角雷达网络信号无效</title>
+    </testgroup>
+    <testgroup>
+      <testcase starttime="2026-10-13 16:49:31" timestamp="   2.712522">
+        <teststep timestamp="   2.712522" level="0" type="user" ident="压力测试" result="na">压力测试已启动；按x停止。</teststep>
+        <teststep timestamp="  16.912522" level="0" type="user" ident="DID校验" result="pass">DID 0xF180 (BOOT版本号)校验通过。</teststep>
+        <teststep timestamp="  16.912522" level="0" type="user" ident="DID校验" result="pass">DID 0xF187 (整车厂定义零件号)校验通过。</teststep>
+        <teststep timestamp="  16.912522" level="0" type="user" ident="DID校验" result="pass">DID 0xF189 (整车厂ECU软件版本号)校验通过。</teststep>
+        <teststep timestamp="  16.912522" level="0" type="user" ident="DID校验" result="pass">DID 0xF089 (整车厂ECU硬件版本号)校验通过。</teststep>
+        <teststep timestamp="  16.912522" level="0" type="user" ident="DID校验" result="pass">DID 0xF013 (整车厂定义软件零件号)校验通过。</teststep>
+        <teststep timestamp="  16.912522" level="0" type="user" ident="DID校验" result="pass">DID 0xF18A (供应商代码)校验通过。</teststep>
+        <teststep timestamp="  16.912522" level="0" type="user" ident="DID校验" result="pass">DID 0xF190 (VIN号)校验通过。</teststep>
+        <teststep timestamp="  16.912522" level="0" type="user" ident="DID存储测试" result="pass">已完成4轮DID存储测试，全部通过。</teststep>
+        <verdict time="2026-10-13 16:49:45" timestamp="  16.912522" endtime="2026-10-13 16:49:45" endtimestamp="  16.912522" result="pass" />
+        <title>STRESS_001 - DID存储测试</title>
+        <ident>STRESS_001</ident>
+      </testcase>
+      <skipped starttime="2026-10-13 16:49:45" timestamp="  16.912522">
+        <title>STRESS_002 - 报文周期监控</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:45" timestamp="  16.912522">
+        <title>STRESS_003 - 休眠唤醒循环</title>
+      </skipped>
+      <skipped starttime="2026-10-13 16:49:45" timestamp="  16.912522">
+        <title>STRESS_004 - DTC老化</title>
+      </skipped>
+      <title>15.压力测试</title>
+    </testgroup>
+    <title>DTC测试</title>
+  </testgroup>
+  <verdict time="2026-10-13 16:49:45" timestamp="  16.912522" endtime="2026-10-13 16:49:45" endtimestamp="  16.912522" result="pass" />
+  <title>DTC故障测试</title>
+  <description>DTC fault-injection automated test cases.</description>
+  <testlogfiles>
+    <testlogfile file="..\ReportAndLog\2026_10_13_15_23_26\LogFiles\_report_folder_probe.blf" logbegin="Active at test start" logend="Active at test end" />
+  </testlogfiles>
+  <engineer>
+    <xinfo>
+      <name>Windows Login Name</name>
+      <description>BLWH-BK-0153</description>
+    </xinfo>
+  </engineer>
+  <testsetup>
+    <xinfo>
+      <name>Version</name>
+      <description>CANoe.ISO11783.J1939.CANopen.CAN.LIN.MOST.FlexRay.J1587.Ethernet.Car2x.AFDX.A429.AMD/XCP.Scope /pro 12.0.221 (SP6)</description>
+    </xinfo>
+    <xinfo>
+      <name>Configuration</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_G_UDS Project\T1V_G_ICE.cfg</description>
+    </xinfo>
+    <xinfo>
+      <name>Database EEA(5.1)_Message_List_version3.1_FL_DA_CANFD_RLCR_20260730174343 on CAN1</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_G_UDS Project\Dbc\EEA(5.1)_Message_List_version3.1_FL_DA_CANFD_RLCR_20260730174343.dbc (2026-09-14 15:08:25)</description>
+    </xinfo>
+    <xinfo>
+      <name>Database EEA(5.1)_Message_List_version3.1_FL_DA_CANFD_RRCR_20260730174343 on CAN1</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_G_UDS Project\Dbc\EEA(5.1)_Message_List_version3.1_FL_DA_CANFD_RRCR_20260730174343.dbc (2026-08-03 14:15:33)</description>
+    </xinfo>
+    <xinfo>
+      <name>Database Jutor_T1V_MPC4_RFL_RFR_PrivateCAN_V1.2 on CAN2</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_G_UDS Project\Dbc\Jutor_T1V_MPC4_RFL_RFR_PrivateCAN_V1.2.dbc (2026-09-20 16:13:46)</description>
+    </xinfo>
+    <xinfo>
+      <name>Database Jutor_T1V_MPC4_RRL_RRR_PrivateCAN_V1.2 on CAN2</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_G_UDS Project\Dbc\Jutor_T1V_MPC4_RRL_RRR_PrivateCAN_V1.2.dbc (2026-09-20 16:13:50)</description>
+    </xinfo>
+    <xinfo>
+      <name>Diagnostic Description of FactoryCalib</name>
+      <description>Base_Variant, en-US, D:\捷图T1V雷达\3.测试工程\T1V_G_UDS Project\Cdd\Factory_Calib.cdd</description>
+    </xinfo>
+    <xinfo>
+      <name>Diagnostic Description of T1V_C_RLCR</name>
+      <description>Base_Variant, en-US, D:\捷图T1V雷达\3.测试工程\T1V_G_UDS Project\Cdd\T1V_G_RLCR.cdd</description>
+    </xinfo>
+    <xinfo>
+      <name>Diagnostic Description of T1V_C_RRCR</name>
+      <description>Base_Variant, en-US, D:\捷图T1V雷达\3.测试工程\T1V_G_UDS Project\Cdd\T1V_G_RRCR.cdd</description>
+    </xinfo>
+    <xinfo>
+      <name>Test Module Name</name>
+      <description>DtcFault</description>
+    </xinfo>
+    <xinfo>
+      <name>Test Module File</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_G_UDS Project\Code\5.1Test\TestModule\DtcFault.vxt</description>
+    </xinfo>
+    <xinfo>
+      <name>Last modification of Test Module File</name>
+      <description>2026-10-13, 16:09:55</description>
+    </xinfo>
+    <xinfo>
+      <name>Test Module Library (CAPL)</name>
+      <description>D:\捷图T1V雷达\3.测试工程\T1V_G_UDS Project\Code\5.1Test\TestModule\DtcFault.can</description>
+    </xinfo>
+    <xinfo>
+      <name>Windows Computer Name</name>
+      <description>BLWH-BK-0153</description>
+    </xinfo>
+    <xinfo>
+      <name>Nodelayer Module J1939TestServiceLibraryNL</name>
+      <description>J1939 Test Service Library for CANoe, Version 12.0.221.0, C:\Program Files\Vector CANoe 12.0\Exec32\J1939TestServiceLibraryNL.dll</description>
+    </xinfo>
+    <xinfo>
+      <name>Nodelayer Module CANOEILNLVECTOR</name>
+      <description>CANoe Interaction Layer NL (Vector) Version 3.17.66 (Jan 30 2019 12:34:12) , C:\Program Files\Vector CANoe 12.0\Exec32\CANOEILNLVECTOR.DLL</description>
+    </xinfo>
+  </testsetup>
+  <hardware name="CAN Channel Interfaces" category="CategoryCANIF">
+    <xinfoset type="device">
+      <xinfoobject type="device">
+      <xinfo key="channel">
+        <name>Channel</name>
+        <description>1</description>
+      </xinfo>
+      <xinfo key="device">
+        <name>Device</name>
+        <description>VN1610</description>
+      </xinfo>
+      <xinfo key="serialnumber">
+        <name>Serial number</name>
+        <description>51380</description>
+      </xinfo>
+      <xinfo key="driverdllversion">
+        <name>Driver DLL version</name>
+        <description>11.2.20</description>
+      </xinfo>
+      <xinfo key="driverversion">
+        <name>Driver version</name>
+        <description>10.9.12</description>
+      </xinfo>
+      </xinfoobject>
+      <xinfoobject type="device">
+      <xinfo key="channel">
+        <name>Channel</name>
+        <description>2</description>
+      </xinfo>
+      <xinfo key="device">
+        <name>Device</name>
+        <description>VN1610</description>
+      </xinfo>
+      <xinfo key="serialnumber">
+        <name>Serial number</name>
+        <description>51380</description>
+      </xinfo>
+      <xinfo key="driverdllversion">
+        <name>Driver DLL version</name>
+        <description>11.2.20</description>
+      </xinfo>
+      <xinfo key="driverversion">
+        <name>Driver version</name>
+        <description>10.9.12</description>
+      </xinfo>
+      </xinfoobject>
+    </xinfoset>
+  </hardware>
+</testmodule>
+<!--footprint="8efcb76406720d989f94d93716aa4382" version="1"-->

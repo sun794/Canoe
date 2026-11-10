@@ -1,0 +1,978 @@
+/*@!Encoding:936*/
+includes
+{
+  #include "Serial.cin"
+}
+
+variables
+{
+  const int COLD_START_NORMAL_SEQ_NO = 10;
+  const int COLD_START_SEVERE_SEQ_NO = 20;
+  const int WARM_START_SEVERE_SEQ_NO = 30;
+  const int LOW_VOLTAGE_START_SEQ_NO = 40;
+  
+  enum RelayType{
+    DAM =0,
+    QYF =1
+  }RealType;
+  const byte DevAddr=0xFE;//DAM和QG继电器的广播地址
+  const byte PortNumber=0x02;//配置DAM和QG继电器的端口数量用于全开全断指令，当前默认设置为DAM2通道继电器，DAM：0x2 QG：0x6
+  dword Baudrate=9600;//设置波特率
+  const dword dataBits = 8;
+  const dword stopBits = 1;
+  const int kBUFFER_SIZE = 1000;
+    // data is copied from callback buffer to gReceiverBuffer (collects data)
+  byte gReceiverCallbackBuffer[kBUFFER_SIZE];
+  byte gReceivedBuffer[kBUFFER_SIZE];
+  byte gReceivedBuffertemp[kBUFFER_SIZE];
+  dword gLastReceiveLength;
+  const dword parity = 0;//0:none 1:even 0:odd
+  const float POWER_VOLTAGE=12.0;
+  const float POWER_CURRENT=5.0;
+  const float POWER_OFF=0;
+  byte gSeriIniTimes;
+  byte gRelayIniTimes;//用于继电器串口的初始化通知打印
+  float gVoltable[100];
+  byte gVoltableLen;
+  char gSerialReceivedData[50]="received serial data";
+  char gSerialSendData[50]="Send serial data";
+  msTimer gITECHVoltageFluctuationTimer;
+  int gITECHVoltageFluctuationActive = 0;
+  int gITECHVoltageFluctuationPort = -1;
+  long gITECHVoltageFluctuationIntervalMs = 500;
+  float gITECHVoltageFluctuationNormal = POWER_VOLTAGE;
+  float gITECHVoltageFluctuationLow = 11.0;
+  float gITECHVoltageFluctuationHigh = 13.5;
+  float gITECHVoltageLast = POWER_VOLTAGE;
+  float gITECHVoltageMin = POWER_VOLTAGE;
+  float gITECHVoltageMax = POWER_VOLTAGE;
+  long gITECHVoltageSampleCount = 0;
+  byte gITECHInitialized = 0;
+  int gITECHInitializedPort = -1;
+  byte RelayControlCom = 0;  // Legacy relay serial port; fill in if relay helpers are used.
+  
+  byte aucCRCHi[256] = {
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40,
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40,
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40,
+			0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40,
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40,
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41,
+			0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40,
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41,
+			0x00, 0xC1, 0x81, 0x40
+	};
+	
+	byte aucCRCLo[256] = {
+			0x00, 0xC0, 0xC1, 0x01, 0xC3, 0x03, 0x02, 0xC2, 0xC6, 0x06, 0x07, 0xC7,
+			0x05, 0xC5, 0xC4, 0x04, 0xCC, 0x0C, 0x0D, 0xCD, 0x0F, 0xCF, 0xCE, 0x0E,
+			0x0A, 0xCA, 0xCB, 0x0B, 0xC9, 0x09, 0x08, 0xC8, 0xD8, 0x18, 0x19, 0xD9,
+			0x1B, 0xDB, 0xDA, 0x1A, 0x1E, 0xDE, 0xDF, 0x1F, 0xDD, 0x1D, 0x1C, 0xDC,
+			0x14, 0xD4, 0xD5, 0x15, 0xD7, 0x17, 0x16, 0xD6, 0xD2, 0x12, 0x13, 0xD3,
+			0x11, 0xD1, 0xD0, 0x10, 0xF0, 0x30, 0x31, 0xF1, 0x33, 0xF3, 0xF2, 0x32,
+			0x36, 0xF6, 0xF7, 0x37, 0xF5, 0x35, 0x34, 0xF4, 0x3C, 0xFC, 0xFD, 0x3D,
+			0xFF, 0x3F, 0x3E, 0xFE, 0xFA, 0x3A, 0x3B, 0xFB, 0x39, 0xF9, 0xF8, 0x38,
+			0x28, 0xE8, 0xE9, 0x29, 0xEB, 0x2B, 0x2A, 0xEA, 0xEE, 0x2E, 0x2F, 0xEF,
+			0x2D, 0xED, 0xEC, 0x2C, 0xE4, 0x24, 0x25, 0xE5, 0x27, 0xE7, 0xE6, 0x26,
+			0x22, 0xE2, 0xE3, 0x23, 0xE1, 0x21, 0x20, 0xE0, 0xA0, 0x60, 0x61, 0xA1,
+			0x63, 0xA3, 0xA2, 0x62, 0x66, 0xA6, 0xA7, 0x67, 0xA5, 0x65, 0x64, 0xA4,
+			0x6C, 0xAC, 0xAD, 0x6D, 0xAF, 0x6F, 0x6E, 0xAE, 0xAA, 0x6A, 0x6B, 0xAB,
+			0x69, 0xA9, 0xA8, 0x68, 0x78, 0xB8, 0xB9, 0x79, 0xBB, 0x7B, 0x7A, 0xBA,
+			0xBE, 0x7E, 0x7F, 0xBF, 0x7D, 0xBD, 0xBC, 0x7C, 0xB4, 0x74, 0x75, 0xB5,
+			0x77, 0xB7, 0xB6, 0x76, 0x72, 0xB2, 0xB3, 0x73, 0xB1, 0x71, 0x70, 0xB0,
+			0x50, 0x90, 0x91, 0x51, 0x93, 0x53, 0x52, 0x92, 0x96, 0x56, 0x57, 0x97,
+			0x55, 0x95, 0x94, 0x54, 0x9C, 0x5C, 0x5D, 0x9D, 0x5F, 0x9F, 0x9E, 0x5E,
+			0x5A, 0x9A, 0x9B, 0x5B, 0x99, 0x59, 0x58, 0x98, 0x88, 0x48, 0x49, 0x89,
+			0x4B, 0x8B, 0x8A, 0x4A, 0x4E, 0x8E, 0x8F, 0x4F, 0x8D, 0x4D, 0x4C, 0x8C,
+			0x44, 0x84, 0x85, 0x45, 0x87, 0x47, 0x46, 0x86, 0x82, 0x42, 0x43, 0x83,
+			0x41, 0x81, 0x80, 0x40
+	};
+  //Receive data for QYF 继电器
+  byte QYFAllRespData[1]={0xEF};//QYF继电器单路断开指令的串口返回数据，跟控制所有端口开断的指令返回数据一致
+  byte QYFSigleOpenRespData[2]={0xEF,0xFF};//QYF继电器单路连接指令的串口返回数据，跟其他指令返回数据不同的是有2个字节数据
+  byte QYFSigleCloseRespData[1]={0xEF};//QYF继电器单路断开指令的串口返回数据，跟控制所有端口开断的指令返回数据一致
+   //Receive data for DAM 继电器
+  
+  //QG继电器全开全断指令的串口返回数据跟DAM差不多，单路通断的串口返回数据跟发送的指令一致，QG对比DAM的继电器主要是端口数不一样，导致CRC16校验值也不一样，因此去掉后面校验码的比对后可以用用一个数组
+  byte DAMAllRespData[6]={DevAddr,0x0F,0x00,0x00,0x00,PortNumber};
+ 
+  }
+
+int ITECH_CmdProc2(int port, char command[], char response[])
+{
+  int ret;
+  byte cmd[256];
+  memcpy(cmd, command, strlen(command));
+  ret = SerialSendData(port, cmd, strlen(command));
+  if(ret != 0)
+  {
+    write("%g: Failed to send \"%s\" on port %d. code = %d", timeNow()/100.0, command, port, ret);
+    return -1;
+  }
+  #if TEST_NODE
+  ret = SerialReceiveData(port, response, elCount(response), 5000);
+  if(ret < 1)
+  {
+    write("%g: No reponse to \"%s\" on port %d. code = %d", timeNow()/100.0, command, port, ret);
+    return -2;
+  }
+  else
+  {
+    write("%g: Reponse \"%s\" to \"%s\" on port %d. length = %d", timeNow()/100.0, response, command, port, ret);
+    response[ret - 1] = 0;
+  }
+  #endif
+  return 0;
+}
+
+int ITECH_CmdProc(int port, char command[])
+{
+  int ret;
+  byte cmd[256];
+  memcpy(cmd, command, strlen(command));
+  ret = SerialSendData(port, cmd, strlen(command));
+  if(ret != 0)
+  {
+    write("Failed to send \"%s\" on port %d. code = %d", timeNow()/100.0, command, port, ret);
+    return -1;
+  }
+  #if TEST_NODE
+  testWaitForTimeout(40);
+  #endif
+  return 0;
+}
+
+export int ITECH_Init(int port)
+{
+  int ret;
+
+  ret = SerialInit(port, 9600, 8, 1, 0, 0, '\n');
+  if(ret != 0)
+    return ret;
+  
+  // SYST:REMote is a SCPI setting command and does not require an echoed response.
+  ret = ITECH_CmdProc(port, "SYST:REMote \n");
+  if(ret != 0)
+    return -3;
+  
+  #if TEST_NODE
+  ret = ITECH_CmdProc(port, "FUNC:GEN:SEL VOLTAGE \n");
+  if(ret != 0)
+    return -4;
+  #endif
+  return 0;
+}
+
+export int ITECH_EnsureReady(int port)
+{
+  int ret;
+
+  if(port <= 0)
+    return -1;
+
+  // Close both handles so every project start begins with a fresh port.
+  if(gITECHInitializedPort > 0 && gITECHInitializedPort != port)
+  {
+    SerialCloseAction(gITECHInitializedPort);
+  }
+  SerialCloseAction(port);
+  gITECHInitialized = 0;
+  gITECHInitializedPort = -1;
+
+  // Initialize the serial port during project startup.
+  ret = ITECH_Init(port);
+  if(ret != 0)
+    return ret;
+
+  ret = ITECH_SetMaxCurrent(port, POWER_CURRENT);
+  if(ret != 0)
+    return ret;
+
+  ret = ITECH_SetVoltage(port, POWER_VOLTAGE);
+  if(ret != 0)
+    return ret;
+
+  ret = ITECH_OpenPower(port);
+  if(ret != 0)
+    return ret;
+
+  gITECHInitialized = 1;
+  gITECHInitializedPort = port;
+  ITECH_ResetVoltageStatistics(POWER_VOLTAGE);
+  return 0;
+}
+
+void ITECH_ResetVoltageStatistics(float voltage)
+{
+  gITECHVoltageLast = voltage;
+  gITECHVoltageMin = voltage;
+  gITECHVoltageMax = voltage;
+  gITECHVoltageSampleCount = 1;
+}
+
+void ITECH_RecordVoltage(float voltage)
+{
+  gITECHVoltageLast = voltage;
+  if(gITECHVoltageSampleCount == 0)
+  {
+    gITECHVoltageMin = voltage;
+    gITECHVoltageMax = voltage;
+  }
+  else
+  {
+    if(voltage < gITECHVoltageMin)
+      gITECHVoltageMin = voltage;
+    if(voltage > gITECHVoltageMax)
+      gITECHVoltageMax = voltage;
+  }
+  gITECHVoltageSampleCount++;
+}
+
+export void ITECH_GetVoltageStatistics(float &lastVoltage,
+                                       float &minVoltage,
+                                       float &maxVoltage,
+                                       long &sampleCount)
+{
+  lastVoltage = gITECHVoltageLast;
+  minVoltage = gITECHVoltageMin;
+  maxVoltage = gITECHVoltageMax;
+  sampleCount = gITECHVoltageSampleCount;
+}
+export int ITECH_StartVoltageFluctuation(int port, float normalVoltage,
+                                         float lowVoltage, float highVoltage,
+                                         long intervalMs)
+{
+  int ret;
+
+  if(intervalMs < 100)
+    intervalMs = 100;
+  if(lowVoltage <= 0 || highVoltage <= 0 || normalVoltage <= 0)
+    return -1;
+  if(highVoltage < lowVoltage)
+    return -2;
+
+  if(!gITECHInitialized || gITECHInitializedPort != port)
+    return -3;
+
+  cancelTimer(gITECHVoltageFluctuationTimer);
+  gITECHVoltageFluctuationPort = port;
+  gITECHVoltageFluctuationNormal = normalVoltage;
+  gITECHVoltageFluctuationLow = lowVoltage;
+  gITECHVoltageFluctuationHigh = highVoltage;
+  gITECHVoltageFluctuationIntervalMs = intervalMs;
+  ITECH_ResetVoltageStatistics(normalVoltage);
+  gITECHVoltageFluctuationActive = 1;
+
+  ret = ITECH_SetVoltage(port, normalVoltage);
+  if(ret != 0)
+  {
+    gITECHVoltageFluctuationActive = 0;
+    return ret;
+  }
+
+  write("ITECH random voltage fluctuation started on port %d: %.2fV..%.2fV, interval=%dms",
+        port, normalVoltage, lowVoltage, highVoltage, intervalMs);
+  setTimer(gITECHVoltageFluctuationTimer, intervalMs);
+  return 0;
+}
+
+export void ITECH_StopVoltageFluctuation(int restoreNormal)
+{
+  cancelTimer(gITECHVoltageFluctuationTimer);
+  gITECHVoltageFluctuationActive = 0;
+
+  if(restoreNormal && gITECHInitialized && gITECHInitializedPort > 0)
+  {
+    ITECH_SetVoltage(gITECHInitializedPort, gITECHVoltageFluctuationNormal);
+    write("ITECH voltage fluctuation stopped; restored %.2fV on port %d",
+          gITECHVoltageFluctuationNormal, gITECHInitializedPort);
+  }
+}
+
+on timer gITECHVoltageFluctuationTimer
+{
+  float targetVoltage;
+  long voltageRangeSteps;
+  int ret;
+
+  if(!gITECHVoltageFluctuationActive)
+    return;
+
+  // Generate a new value every interval with 0.01V resolution, inclusive.
+  voltageRangeSteps = (long)((gITECHVoltageFluctuationHigh -
+                              gITECHVoltageFluctuationLow) * 100.0);
+  targetVoltage = gITECHVoltageFluctuationLow +
+                  random(voltageRangeSteps + 1) / 100.0;
+
+  ret = ITECH_SetVoltage(gITECHVoltageFluctuationPort, targetVoltage);
+  if(ret != 0)
+  {
+    gITECHVoltageFluctuationActive = 0;
+    write("ITECH voltage fluctuation stopped after setting %.2fV failed, code=%d",
+          targetVoltage, ret);
+    return;
+  }
+
+  ITECH_RecordVoltage(targetVoltage);
+  write("ITECH voltage fluctuation set to %.2fV on port %d",
+        targetVoltage, gITECHVoltageFluctuationPort);
+  setTimer(gITECHVoltageFluctuationTimer,
+           gITECHVoltageFluctuationIntervalMs);
+}
+
+export int ITECH_SetVoltage(int port, float voltage)
+{
+  char command[64];
+  char response[256];
+  char command2[64];
+  int ret;
+  float volt;
+  snprintf(command, elcount(command), "VOLTage %g \n",  voltage);
+  ret = ITECH_CmdProc(port, command);
+  if(ret != 0)
+    return ret;
+  #if 0
+  //check voltage setting 
+  ret = ITECH_CmdProc(port, "VOLTage? \n");
+  if(ret != 0)
+    return ret;
+  volt = atodbl(response);
+  if(abs(volt - voltage) > 0.1)
+  {
+    write("Voltage setting error");
+    return -2;
+  }
+  #endif
+  return 0;
+}
+
+export int ITECH_SetMaxCurrent(int port, float current)
+{
+  char command[64];
+  char response[256];
+  int ret;
+  float curr;
+  snprintf(command, elcount(command), "CURRent %g \n",  current);
+  ret = ITECH_CmdProc(port, command);
+  if(ret != 0)
+    return ret;
+  #if 0
+  //check current setting 
+  ret = ITECH_CmdProc(port, "CURRent? \n");
+  if(ret != 0)
+    return ret;
+  curr = atodbl(response);
+  if(abs(curr - current) > 0.1)
+  {
+    write("Current setting error");
+    return -3;
+  }
+  #endif
+  return 0;
+}
+
+export int ITECH_GetPower(int port, float &voltage, float &current)
+{
+  char command[64];
+  char response[256];
+  int ret;
+  ret = ITECH_CmdProc2(port, "MEASure:VOLTage? \n",response);
+  
+  #if TEST_NODE
+  if(ret != 0)
+  {
+    write("Failed to get output voltage of ITECH power on port %d.", port);
+    return -2;
+  }
+  voltage = atodbl(response);
+  #endif
+  
+  ret = ITECH_CmdProc2(port, "MEASure:CURRent? \n",response);
+  #if TEST_NODE
+  if(ret != 0)
+  {
+    write("Failed to get output current of ITECH power on port %d.", port);
+    return -3;
+  }
+  current = atodbl(response);
+  #endif
+  
+  write("ITECHPowwrsail.cin::voltage=%f,cur=%f",voltage,current);
+  return 0;
+}
+
+export int ITECH_OpenPower(int port)
+{
+  char command[64];
+  char response[256];
+  int ret;
+  ret = ITECH_CmdProc(port, "OUTPut 1 \n");
+  if(ret != 0)
+    return ret;
+  #if 0
+  ITECH_CmdProc(port, "OUTPut? \n");
+  if(strncmp(response, "ON", elCount(response)) != 0)
+  {
+    write("Failed to set output on for ITECH power on port %d. \"%s\"", port, response);
+    return -4;
+  }
+  #endif
+  return 0;
+}
+
+export int ITECH_ClosePower(int port)
+{
+  char response[256];
+  ITECH_CmdProc(port, "OUTPut 0 \n");
+  #if 0
+  ITECH_CmdProc(port, "OUTPut? \n");
+  if(strncmp(response, "OFF", elCount(response)) != 0)
+  {
+    write("Failed to set output off for ITECH power on port %d. \"%s\"", port, response);
+    return -5;
+  }
+  #endif
+  
+  return 0;
+}
+
+
+byte InitSerialPort(byte port)
+ {
+   
+  // open the serial port (comes up with Windows defaults)
+  if(rs232Open(port)!=1)
+   {
+ 
+    write("An error occurred during opening of the serial port %d.",port);
+    return 0;
+  }
+  if(rs232Configure(port,Baudrate,dataBits,stopBits,parity)!=1)
+  {
+    write("An error occurred during initialization of the serial port %d.", port); 
+    return 0;
+  }
+  #if 1
+  // set buffer for reception (otherwise callback would not work)
+  if(rs232Receive(port, gReceiverCallbackBuffer, kBUFFER_SIZE)!=1)//初始化的时候如果执行这句后续可以用rs232onReceive来接收串口回复的数据
+  {  
+    write("An error occurred during setting the receiver buffer for serial Port %d.", port);
+    return 0;
+  }
+  #endif
+  
+  return 1;
+}
+
+
+
+int InitRelayPortOpen(byte port,enum RelayType type) //目前我们使用的继电器DAM IO口最大到6 QYF最大到8
+{
+  int index = 0;
+  int i;
+  word crc;
+  byte src[100];
+  index =0;
+  RealType=type;//继电器的类型 type 1:QYF  type 0 :DAM
+  gRelayIniTimes++;
+  if(gRelayIniTimes==1)//每次测试循环只需要初始化一次
+   {
+     if(InitSerialPort(port)==1)
+      {   
+        TeststepPass("","成功打开继电器串口，端口号：[COM%d]",port);
+        write("成功打开继电器串口，端口号：[COM%d]",port);
+       }
+      else
+       { 
+         TeststepFail("","打开继电器串口失败，端口号：[COM%d]",port);
+         write("打开继电器串口失败，端口号：[COM%d]",port);
+         return 0;
+      }
+  }
+  if(RealType==DAM)
+  {
+  	src[index++] = DevAddr;
+  	src[index++] = 0x0F;//ALL
+  	src[index++] = 0x00;//起始地址高位
+  	src[index++] = 0x00;//起始地址低位
+  	src[index++] = 0x00;//控制继电器端口数量高位，一般这里默认为0，我们不需要使用那么多端口的继电器
+  	src[index++] = PortNumber;//控制继电器端口数量低位，如果是青果的6路继电器，那么这里设置为06
+    if(0<PortNumber&&PortNumber<=8)
+    {  
+      src[index++] = 0x01;//表示需要1个字节
+      src[index++] = 0xFF;//闭合（每个bit表示一路继电器端口开闭，比如bit0=1,就是端口1闭合，因此一个字节表示8个端口）
+      }
+    else if(8<PortNumber&&PortNumber<=16)
+    {
+      src[index++] = 0x02; //表示需要2个字节
+      src[index++] = 0xFF;//闭合
+      src[index++] = 0xFF;//闭合
+    }
+    else if(16<PortNumber &&PortNumber<=24)
+    {
+      src[index++] = 0x03; //表示需要3个字节
+      src[index++] = 0xFF;//闭合
+      src[index++] = 0xFF;//闭合
+      src[index++] = 0xFF;//闭合
+    }
+ 
+  	crc = usMBCRC16(src,index);
+  	src[index++]  = crc&0xff;
+  	src[index++]  = crc>>8;
+    SendAndRead(port,src,index);
+    if(testWaitForTextEvent(gSerialSendData,2000))
+    {
+     // write("串口指令发送成功");
+    
+    if(testWaitForTextEvent(gSerialReceivedData,2000))
+    {
+     // write("接收到已发出的DAM继电器控制指令的串口返回数据");
+      for(i=0;i<gLastReceiveLength-2;i++)//这里减2主要是减去了2个CRC校验值的比对，为了兼容QG和DAM的全开全断指令串口返回值的比对
+      {
+        if(gReceivedBuffertemp[i]!=DAMAllRespData[i])
+        {
+          write("连接DAM继电器全部端口异常，%.0fms -> 接收数据：ReceivedData[%d]:0x%02X",timeNowfloat()/100.0,i,gReceivedBuffertemp[i]);
+          testStepFail("","连接DAM继电器全部端口异常，%.0fms -> 接收数据：ReceivedData[%d]:0x%02X",timeNowfloat()/100.0,i,gReceivedBuffertemp[i]);
+          return 0;
+        }
+      }
+     }
+    else
+    {
+     write("未接收到发出控制指令的串口返回数据，请检查DAM继电器状态");
+     testStepFail("未接收到发出控制指令的串口返回数据，请检查DAM继电器状态");
+     return 0;
+    }
+    }
+    else
+    {
+      write("串口指令发送失败");
+      testStepFail("串口指令发送失败");
+      return 0;
+    }
+  }
+ else //QYF继电器指令的串口返回数据有点奇怪的点在于，第一次的请求，返回值都为0x00
+   {
+  
+    src[index++] = 0x00;
+    src[index++] = 0xf9;//连接全部端口
+    src[index++] = 0xff;
+    SendAndRead(port,src,index);
+   if(testWaitForTextEvent(gSerialSendData,2000))
+    {
+   //   write("串口指令发送成功");
+    if(testWaitForTextEvent(gSerialReceivedData,2000))
+    {
+      //write("接收到已发出的QYF继电器控制指令的串口返回数据");
+     #if 1 //使用条件编译，目前调试发现QYF的继电器串口返回数据偶尔会异常，因此这样具体判断串口返回字段会有问题，而DAM相对稳定
+      for(i=0;i<gLastReceiveLength;i++)
+      {
+        
+        if(gReceivedBuffertemp[i]!=QYFAllRespData[i])
+        {
+          write("连接QYF继电器全部端口异常，%.0fms -> 接收数据：ReceivedData[%d]:0x%02X",timeNowfloat()/100.0,i,gReceivedBuffertemp[i]);
+          testStepFail("","连接QYF继电器全部端口异常，%.0fms -> 接收数据：ReceivedData[%d]:0x%02X",timeNowfloat()/100.0,i,gReceivedBuffertemp[i]);
+          return 0;
+        }        
+      }
+      #endif
+    }
+    else
+    {
+     testStepFail("未接收到发出控制指令的串口返回数据，请检查QYF继电器状态");
+     write("未接收到发出控制指令的串口返回数据，请检查QYF继电器状态");
+     return 0;
+    }
+   }
+   else
+    {
+      testStepFail("串口指令发送失败");
+      write("串口指令发送失败");
+      return 0;
+    }
+  }
+  testWaitForTimeout(1000);
+  write("连接继电器所有端口成功");
+  testStep("","连接继电器所有端口成功");
+  return 1;
+}
+
+int InitRelayPortClose(byte port,enum RelayType type) //目前我们使用的继电器DAM IO口最大到6 QYF最大到8
+{
+  int index = 0;
+  int i;
+  word crc;
+  byte src[100];
+  index =0;
+
+  RealType=type;//继电器的类型 type 1:QYF  type 0 :DAM
+  gRelayIniTimes++;
+  
+  if(gRelayIniTimes==1)//每次测试循环只需要初始化一次
+   {
+     if(InitSerialPort(port)==1)
+      {   
+        TeststepPass("","成功打开继电器串口，端口号：[COM%d]",port);
+        write("成功打开继电器串口，端口号：[COM%d]",port);
+       }
+      else
+       { 
+         TeststepFail("","打开继电器串口失败，端口号：[COM%d]",port);
+         write("打开继电器串口失败，端口号：[COM%d]",port);
+         return 0;
+      }
+  }
+  if(RealType==DAM)
+  {
+  	src[index++] = DevAddr;
+  	src[index++] = 0x0F;//ALL
+  	src[index++] = 0x00;
+  	src[index++] = 0x00;
+  	src[index++] = 0x00;
+  	src[index++] = PortNumber;//端口数量，如果是青果的6路继电器，那么这里设置为06
+   if(0<PortNumber&&PortNumber<=8)
+    {  
+      src[index++] = 0x01;//表示需要1个字节
+      src[index++] = 0x00;//断开（每个bit表示一路继电器端口开闭，比如bit0=0,就是端口1断开，因此一个字节表示8个端口）
+      }
+    else if(8<PortNumber&&PortNumber<=16)
+    {
+      src[index++] = 0x02; //表示需要2个字节
+      src[index++] = 0x00;//断开
+      src[index++] = 0x00;//断开
+    }
+    else if(16<PortNumber &&PortNumber<=24)
+    {
+      src[index++] = 0x03; //表示需要3个字节
+      src[index++] = 0x00;//断开
+      src[index++] = 0x00;//断开
+      src[index++] = 0x00;//断开
+    }
+   
+  	crc = usMBCRC16(src,index);
+  	src[index++]  = crc&0xff;
+  	src[index++]  = crc>>8;
+    SendAndRead(port,src,index);
+   if(testWaitForTextEvent(gSerialSendData,2000))
+   {
+ //   write("串口指令发送成功");
+    if(testWaitForTextEvent(gSerialReceivedData,2000))
+    {
+      //write("接收到已发出的DAM继电器控制指令的串口返回数据");
+      for(i=0;i<gLastReceiveLength-2;i++)//这里减2主要是减去了2个CRC校验值的比对，为了兼容QG和DAM的全开全断指令串口返回值的比对
+      {
+        if(gReceivedBuffertemp[i]!=DAMAllRespData[i])
+        {
+          write("断开DAM继电器全部端口异常，%.0fms -> 接收数据：ReceivedData[%d]:0x%02X",timeNowfloat()/100.0,i,gReceivedBuffertemp[i]);
+          testStepFail("","断开DAM继电器全部端口异常，%.0fms -> 接收数据：ReceivedData[%d]:0x%02X",timeNowfloat()/100.0,i,gReceivedBuffertemp[i]);
+          return 0;
+        }
+      }
+     }
+    else
+    {
+     testStepFail("未接收到发出控制指令的串口返回数据，请检查DAM继电器状态");
+     write("未接收到发出控制指令的串口返回数据，请检查DAM继电器状态");
+     return 0;
+    }
+  }
+   else
+    {
+      testStepFail("串口指令发送失败");
+      write("串口指令发送失败");
+      return 0;
+    }
+   }
+  else
+   {
+	  src[index++] = 0x00;
+	  src[index++] = 0x09;//断开全部端口
+	  src[index++] = 0xff;
+    SendAndRead(port,src,index);
+   if(testWaitForTextEvent(gSerialSendData,2000))
+   {
+   // write("串口指令发送成功");
+    if(testWaitForTextEvent(gSerialReceivedData,2000))
+    {
+     // write("接收到已发出的QYF继电器控制指令的串口返回数据");
+     #if 1//使用条件编译，目前调试发现QYF的继电器串口返回数据偶尔会异常，因此这样具体判断串口返回字段会有问题，而DAM相对稳定
+      for(i=0;i<gLastReceiveLength;i++)
+      {
+       
+        if(gReceivedBuffertemp[i]!=QYFAllRespData[i])
+        {
+         write("断开QYF继电器全部端口异常，%.0fms -> 接收数据：ReceivedData[%d]:0x%02X",timeNowfloat()/100.0,i,gReceivedBuffertemp[i]);
+         testStepFail("","断开QYF继电器全部端口异常，%.0fms -> 接收数据：ReceivedData[%d]:0x%02X",timeNowfloat()/100.0,i,gReceivedBuffertemp[i]);
+         return 0;
+        }
+      }
+     #endif
+     }
+    else
+    {
+     testStepFail("未接收到发出控制指令的串口返回数据，请检查QYF继电器状态");
+     write("未接收到发出控制指令的串口返回数据，请检查QYF继电器状态");
+     return 0;
+    }
+  }
+  else
+    {
+      testStepFail("串口指令发送失败");
+      write("串口指令发送失败");
+      return 0;
+    }
+   }
+  testWaitForTimeout(1000);
+  teststep("","断开继电器所有端口成功");
+  write("断开继电器所有端口成功");
+  return 1;
+}
+
+
+byte DP_SendByte(byte port,byte str[],byte len)
+{
+  byte i;
+ 
+  
+  if(0==rs232Send(port, str, len))
+  {
+    write("An error occurred during write of block of data to the serial Port %d.", port);
+    return 0;
+  } 
+
+  return 1;
+}
+
+word usMBCRC16(byte src[], int srclen)
+{
+  byte    ucCRCHi;
+  byte    ucCRCLo;
+  byte    iIndex;
+  int i;
+  i=0;//初始化一下
+  iIndex=0;
+  ucCRCHi = 0xFF;
+  ucCRCLo = 0xFF;
+	
+   while ( srclen-- )
+    {
+        iIndex = ucCRCLo ^ src[i++];
+        ucCRCLo =  ucCRCHi ^ aucCRCHi[iIndex];
+        ucCRCHi = aucCRCLo[iIndex];
+    }
+    return(word)(ucCRCHi << 8 | ucCRCLo);
+}
+
+
+
+byte SendAndRead(byte port,byte src[],int srclen)
+{
+	byte n;
+  DP_SendByte(port,src,srclen);
+	//write("Sending %d bytes...",srclen);
+	for(n=0;n<srclen;n++)
+	{
+	//	write("0x%02X ",src[n]);
+	}
+
+	return 1;
+}
+//控制继电器输出，导通 io:1为通道1';2为通道2
+int OpenDO(int addr,int io,byte src[])
+{
+	int index;
+  word crc;
+  index =0;
+	src[index++] = addr;
+	src[index++] = 0x05;
+	src[index++] = 0x00;
+	src[index++] = io-1;//端口
+	src[index++] = 0xff;//导通
+	src[index++] = 0x00;
+  
+
+  crc = usMBCRC16(src,index);
+	src[index++]  = crc&0xff;
+	src[index++]  = crc>>8;
+	return index;
+}
+int CloseDO(int addr,int io,byte src[])
+{
+	int index = 0;
+  word crc;
+  index =0;
+	src[index++] = addr;
+	src[index++] = 0x05;
+	src[index++] = 0x00;
+	src[index++] = io-1;//端口
+	src[index++] = 0x00;//关闭
+	src[index++] = 0x00;
+  
+
+	crc = usMBCRC16(src,index);
+	src[index++]  = crc&0xff;
+	src[index++]  = crc>>8;
+	return index;
+}
+int ReadDO(int addr,int ionum,byte src[])//ionum指需要获取的DO口数目，不是序号
+{
+	int index;
+  word crc;
+  index=0;
+	src[index++] = addr;
+	src[index++] = 0x01;
+	src[index++] = 0x00;
+	src[index++] = 0x00;
+	src[index++] = 0x00;
+	src[index++] = ionum;
+
+  crc = usMBCRC16(src,index);
+	src[index++]  = crc&0xff;
+	src[index++]  = crc>>8;
+  if(ionum>6)
+  {
+    teststep("","发送DAM继电器控制指令异常！");
+    write("发送DAM继电器控制指令异常！");
+		return 0;
+  }
+	return index;
+}
+int WriteDO(int addr,int info1,int info2,int info3,int info4,byte src[])
+{
+	int index;
+  word crc ;
+  index=0;
+	src[index++] = addr;
+	src[index++] = 0x0f;
+	src[index++] = 0x00;
+	src[index++] = 0x00;
+	src[index++] = 0x00;
+	src[index++] = 32;
+	src[index++] = 4;
+	src[index++] = info1;
+	src[index++] = info2;
+	src[index++] = info3;
+	src[index++] = info4;
+
+  crc= usMBCRC16(src,index);
+	src[index++]  = crc&0xff;
+	src[index++]  = crc>>8;
+	return index;
+}
+
+  
+
+
+int SetRelayClose(byte portnum)//目前我们使用的DAM继电器IO口最大到6
+{
+  
+ 
+  int index;
+  int i;
+	byte src[200];
+	int srclen = 0;
+
+  if(RealType==DAM)
+  {
+   srclen = CloseDO(DevAddr,portnum,src);
+  if(portnum>6)
+	{
+    teststepFail("","发送DAM继电器控制指令错误！");
+		write("发送DAM继电器控制指令错误！");
+		return 0;
+	}
+ 
+	SendAndRead(RelayControlCom,src,srclen);
+ if(testWaitForTextEvent(gSerialSendData,2000))
+  {
+  // write("串口指令发送成功");
+   if(testWaitForTextEvent(gSerialReceivedData,2000))
+  {
+  // write("接收到已发出的DAM继电器控制指令的串口返回数据");
+//   for(i=0;i<gLastReceiveLength;i++)
+//   {
+//    if(src[i]!=gReceivedBuffertemp[i])
+//    {
+//     write("断开当前DAM继电器端口[%d]异常,%.0fms -> 接收数据：ReceivedData[%d]:0x%02X",portnum,timeNowfloat()/100.0,i,gReceivedBuffertemp[i]);
+//     testStepFail("","断开当前DAM继电器端口[%d]异常,%.0fms -> 接收数据：ReceivedData[%d]:0x%02X",portnum,timeNowfloat()/100.0,i,gReceivedBuffertemp[i]);
+//     return 0;
+//    }
+//   }
+  }
+  else
+  {
+   testStepFail("未接收到已发出控制指令的串口返回数据，请检查DAM继电器状态");
+   write("未接收到已发出控制指令的串口返回数据，请检查DAM继电器状态");
+   return 0;
+   } 
+  }
+  else
+    {
+      testStepFail("串口指令发送失败");
+      write("串口指令发送失败");
+      return 0;
+    }
+  }
+  else
+  {
+  index=0;
+  src[index++] = 0x00;
+	src[index++] = 0x0F & portnum;//断开端口
+	src[index++] = 0xff;
+  if(portnum>8)
+	{
+    teststepFail("","发送QYF继电器指令错误！");
+		write("发送QYF继电器指令错误！");
+		return 0;
+	}
+ 
+	SendAndRead(RelayControlCom,src,index);
+ if(testWaitForTextEvent(gSerialSendData,2000))
+  {
+  // write("串口指令发送成功");
+  if(testWaitForTextEvent(gSerialReceivedData,2000))
+  {
+  // write("接收到已发出的QYF继电器控制指令的串口返回数据");
+  #if 0//使用条件编译，目前调试发现QYF的继电器串口返回数据偶尔会异常，因此这样具体判断串口返回字段会有问题，而DAM相对稳定
+   for(i=0;i<gLastReceiveLength;i++)
+   {
+    if(gReceivedBuffertemp[i]!=QYFSigleCloseRespData[i])
+    {
+      write("断开当前QYF继电器端口[%d]异常,%.0fms -> 接收数据：ReceivedData[%d]:0x%02X",portnum,timeNowfloat()/100.0,i,gReceivedBuffertemp[i]);
+      testStepFail("","断开当前QYF继电器端口[%d]异常,%.0fms -> 接收数据：ReceivedData[%d]:0x%02X",portnum,timeNowfloat()/100.0,i,gReceivedBuffertemp[i]);
+      return 0;
+    }
+   }
+  #endif
+  }
+ else
+  {
+   testStepFail("未接收到已发出控制指令的串口返回数据，请检查QYF继电器状态");
+   write("未接收到已发出控制指令的串口返回数据，请检查QYF继电器状态");
+   return 0;
+  } 
+  }
+ else
+  {
+    testStepFail("串口指令发送失败");
+    write("串口指令发送失败");
+    return 0;
+  }
+ }
+  teststep("","继电器端口[%d]断开成功",portnum);
+  write("继电器端口[%d]断开成功",portnum);
+	return 1;
+}
