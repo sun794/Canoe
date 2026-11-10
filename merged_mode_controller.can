@@ -1,0 +1,10 @@
+/*@!Encoding:936*/
+
+/*
+  The pressure-test controller now runs inside
+  Code\5.1Test\TestModule\DtcFault.can through
+  merged_mode_controller.cin.
+
+  This configured simulation node is intentionally inactive to prevent a
+  second DTC_Aging state machine and duplicate 0x601 transmission.
+*/

@@ -1,0 +1,1163 @@
+/*@!Encoding:936*/
+includes
+{
+ 
+}
+
+/**************************************************************************************************
+ Description: This file contains disturbance functions.
+ -------------------------------------------------------------------------------------------------
+      C O P Y R I G H T
+ -------------------------------------------------------------------------------------------------
+  Copyright (c) 2017 by Vector Informatik GmbH. All rights reserved.
+
+  This software is copyright protected and proprietary to Vector Informatik GmbH.
+  Vector Informatik GmbH grants to you only those rights as set out in the license conditions.
+  All other rights remain with Vector Informatik GmbH.
+
+  REMOVAL OF THESE COMMENTS IS A VIOLATION OF THE COPYRIGHT AGREEMENT.
+ *************************************************************************************************/
+
+variables
+{
+  enum LineDisturbance
+  {
+    CANHshortCANL,
+    CANLshortGND,
+    CANHcutCANL,
+    CANLcutCANH,
+    CANHshortUbat
+  };  
+  
+  int startsampletest;//Œ™¡À∑¿÷π≤‚ ‘∆‰À˚∑«≤…—˘µ„”√¿˝ ±¥•∑¢∏√œµÕ≥±‰¡ø£¨µº÷¬“Ï≥£‘ˆº”∏√±Í÷æ
+  const float TICK_LENGTH = 6.25; //One tick is 6.25 ns long
+
+  
+  enum CANFramePhase
+  {
+    eInvalidPhase = -1,
+    eArbitrationPhase = 0,
+    eDataPhase = 1
+  };
+  
+  struct CANDisturbanceSettings
+  {
+    int   TicksOneTimeQuanta;
+    int   TicksOneBitTime;
+    float Baudrate;
+    int   Tseg1;
+    int   Tseg2;
+    enum  CANFramePhase Phase;
+  };
+  
+   struct FieldDefinition
+  {
+    sysvarString * sysVarName;
+    int offsetStream;
+    int offsetInField;
+    int length;
+    int fieldIndex;
+  };
+  
+  struct SamplePointTestMeasurementData
+  {
+    double MeasuredSamplePoint;
+    double CalculatedSP       ;
+    double SamplePointMin     ;
+    double SamplePointMax     ;
+    double TqError            ;
+    double TqSyncInPercent    ;
+    int TicksRemained         ;
+    int TicksAll              ;
+    int Tseg1                 ;
+    int Tseg2                 ;
+    int TqAll                 ;
+  };
+  
+  enum SegmentValue
+  {
+    eInvalidSegmentValue         = -1,
+    eDominantSegmentValue        = 0,
+    eRecessiveSegmentValue       = 1,
+    eRecessiveStressSegmentValue = 2
+  };
+  
+}
+
+/// <BitTime_TickConvertions>
+//*************************************************************************************************
+//  Function name : CommonCANDisturbanceLibrary_Get_ArbitrationPhase_Bit_Ticks(long deviceID)
+//  ------------------------------------------------------------------------------------------------
+//  Description   : This function calcuate the needed number of ticks for one bit within the 
+//                  arbitration phase for the CAN Disturbance Interface. 
+//  ------------------------------------------------------------------------------------------------
+//  Parameter     : deviceID                the CAN Disturbance Identifier
+//  ------------------------------------------------------------------------------------------------
+//  Returncode    : return (1 = success/ 0 = failure)
+//**************************************************************************************************
+void CommonCANDisturbanceLibrary_Get_BitTiming_Settings_For(long deviceID, enum  CANFramePhase Phase, struct CANDisturbanceSettings settings)
+{
+  dword       channelNo;
+  CANSettings arbSettings;
+  CANSettings dbrSettings;
+  
+  channelNo = CommonCANDisturbanceLibrary_Get_ChannelNo(deviceID);
+  canFdGetConfiguration(channelNo, arbSettings, dbrSettings);
+  
+  if(dbrSettings.baudrate == 0.0)
+  {
+    Phase = eArbitrationPhase;
+  }
+  
+  switch(Phase)
+  {
+    case eArbitrationPhase:
+      settings.Baudrate = arbSettings.baudrate;
+      settings.TicksOneTimeQuanta = ((1e9 / arbSettings.baudrate) / (arbSettings.tseg1 + arbSettings.tseg2 + 1)) / TICK_LENGTH;
+      settings.TicksOneBitTime = (1e9 / arbSettings.baudrate) / TICK_LENGTH;
+      settings.Tseg1 = arbSettings.tseg1;
+      settings.Tseg2 = arbSettings.tseg2;
+      settings.Phase = eArbitrationPhase;
+      break;
+    case eDataPhase:
+      settings.Baudrate = dbrSettings.baudrate;
+      settings.TicksOneTimeQuanta = ((1e9 / dbrSettings.baudrate) / (dbrSettings.tseg1 + dbrSettings.tseg2 + 1)) / TICK_LENGTH;
+      settings.TicksOneBitTime = (1e9 / dbrSettings.baudrate) / TICK_LENGTH;
+      settings.Tseg1 = dbrSettings.tseg1;
+      settings.Tseg2 = dbrSettings.tseg2;
+      settings.Phase = eDataPhase;
+      break;
+  }
+}
+
+/// <FrameTriggerDefined>
+//*************************************************************************************************
+//  Function name : CommonCANDisturbanceLibrary_Deactivate_Configured_Trigger()
+//  ------------------------------------------------------------------------------------------------
+//  Description   : This function is used for disable the active configured trigger condition 
+//                  of the CAN Disturbance Interface. 
+//  ------------------------------------------------------------------------------------------------
+//  Parameter     : busOffCounter         counter, which specifies how often a BusOff should occur
+//                  msgOccurence          flag, which indicates, whether messages should occur
+//                                        during BusOff waiting phase
+//                  msgId                 message id of the message, which should be destroyed
+//  ------------------------------------------------------------------------------------------------
+//  Returncode    : return (1 = success/ 0 = failure)
+//**************************************************************************************************
+void CommonCANDisturbanceLibrary_Deactivate_Configured_Trigger(int deviceID)
+{
+  long ret;
+
+  if(CommonCANDisturbanceLibrary_Get_Trigger_State(deviceID) != 0)
+  {
+    ret = canDisturbanceTriggerDisable(deviceID);
+  }
+}
+
+
+/// <FrameTriggerDefined>
+//*************************************************************************************************
+//  Function name : CommonCANDisturbanceLibrary_BusOff_ID_Independed(long deviceID)
+//  ------------------------------------------------------------------------------------------------
+//  Description   : This function is used to configure the CAN Disturbance Interface for a all IDs
+//                  ,which had to be destroy. All CAN or CAN FD message, will be disturbed.
+//  ------------------------------------------------------------------------------------------------
+//  Parameter     : deviceID                the CAN Disturbance Identifier
+//  ------------------------------------------------------------------------------------------------
+//  Returncode    : return (1 = success/ 0 = failure)
+//**************************************************************************************************
+byte CommonCANDisturbanceLibrary_BusOff_ID_Independed(long deviceID)
+{
+  byte result;
+  long ret;
+  long flags;
+  word ticksPerBit;
+  message *              msg;
+  canDisturbanceSequence seq;
+  canDisturbanceFrameTrigger trg;
+  canDisturbanceTriggerRepetitions rep;
+  struct CANDisturbanceSettings seqSettings;
+  //------------------------------------------------------------------------
+  //Rest the sequence
+  //------------------------------------------------------------------------  
+  seq.clear();
+  result = 1;
+  //------------------------------------------------------------------------
+  
+  //------------------------------------------------------------------------
+  //Configure trigger execution times
+  //------------------------------------------------------------------------
+  rep.Cycles = 1;
+  rep.HoldOffCycles = 0;
+  rep.HoldOffRepetitions = 0;
+  rep.Repetitions = 32;
+  //------------------------------------------------------------------------
+  
+  //------------------------------------------------------------------------
+  // Output one dominant bit
+  //------------------------------------------------------------------------
+  CommonCANDisturbanceLibrary_Get_BitTiming_Settings_For(deviceID, eArbitrationPhase, seqSettings);
+  ticksPerBit = seqSettings.TicksOneBitTime;
+  write("ticksPerBit %d", ticksPerBit);
+  seq.AppendToSequence(ticksPerBit, 'd');
+  //------------------------------------------------------------------------
+  
+  //------------------------------------------------------------------------
+  //Configure trigger position
+  //------------------------------------------------------------------------
+  trg.SetMessage(msg, deviceID, 0); //Set all fields to don't care
+  trg.TriggerFieldType = @CanDisturbance::Enums::FieldType::CRC;
+  trg.TriggerFieldOffset = 21;
+  flags = sysvar::CanDisturbance::Enums::TriggerEnable::TriggerIfBitMissing;
+  //------------------------------------------------------------------------
+  
+  
+  //------------------------------------------------------------------------
+  // configure and active trigger condition
+  //------------------------------------------------------------------------  
+  ret = canDisturbanceTriggerEnable(deviceID, trg, seq, rep, flags);
+  //------------------------------------------------------------------------
+  
+  if (ret != 1)
+  {
+     result = 0;
+  }
+  
+  return result;
+}
+
+/// <FrameTriggerDefined>
+//*************************************************************************************************
+//  Function name : CommonCANDisturbanceLibrary_BusOff_ID(long deviceID, dword msgId)
+//  ------------------------------------------------------------------------------------------------
+//  Description   : This function is used to configure the CAN Disturbance Interface for a specific ID
+//                  ,which had to be destroy. Behind the ID could be a CAN or CAN FD message.
+//  ------------------------------------------------------------------------------------------------
+//  Parameter     : deviceID              the CAN Disturbance Identifier
+//                  msgId                 message id of the message, which should be destroyed
+//  ------------------------------------------------------------------------------------------------
+//  Returncode    : return (1 = success/ 0 = failure)
+//**************************************************************************************************
+byte CommonCANDisturbanceLibrary_BusOff_ID(long deviceID, dword msgId)
+{
+  byte                             result;
+  long                             ret;
+  long                             flags;
+  word                             ticksPerBit;
+  message *                        msg;
+  canDisturbanceFrameTrigger       frameTrigger;
+  canDisturbanceTriggerRepetitions reps;
+  canDisturbanceSequence           rawSequence;
+  struct CANDisturbanceSettings    seqSettings;
+
+  rawSequence.clear();
+  flags = 0;
+  
+  reps.Cycles = 1;
+  reps.Repetitions = 32;
+  reps.HoldOffRepetitions = 0;
+  reps.HoldOffCycles = 0;
+
+  result = 1;
+  
+  CommonCANDisturbanceLibrary_Get_BitTiming_Settings_For(deviceID, eArbitrationPhase, seqSettings);
+  ticksPerBit = seqSettings.TicksOneBitTime;
+  ret = rawSequence.AppendToSequence(ticksPerBit, 'd');
+  
+  if (ret != 1)
+  {
+    result = 0;
+  }
+  else
+  {
+    flags = @CanDisturbance::Enums::ValidityMaskFlags::IDBase
+            | @CanDisturbance::Enums::ValidityMaskFlags::IDExtended
+            | @CanDisturbance::Enums::ValidityMaskFlags::IDE;
+    
+    msg.id = msgId;
+    frameTrigger.TriggerFieldOffset = 21;
+    frameTrigger.TriggerFieldType = @CanDisturbance::Enums::FieldType::CRC;
+    ret = frameTrigger.SetMessage(msg, deviceID, flags);
+    
+    if (ret != 1)
+    {
+      result = 0;
+    }
+    else
+    {
+      flags = sysvar::CanDisturbance::Enums::TriggerEnable::TriggerIfBitMissing;
+      ret = canDisturbanceTriggerEnable(deviceID, frameTrigger, rawSequence, reps, flags);
+      if (ret != 1)
+      {
+        result = 0;
+      }
+    }
+  }
+
+  return result;
+}
+
+/// <FrameTriggerDefined>
+//*************************************************************************************************
+//  Function name : CommonCANDisturbanceLibrary_DisturbAllECUMessageswithoutNMH(long deviceID, dword startID, dword endID)
+//  ------------------------------------------------------------------------------------------------
+//  Description   : This function is used to configure the CAN Disturbance Interface for a specific ID
+//                  ,which had to be destroy. Behind the ID could be a CAN or CAN FD message.
+//  ------------------------------------------------------------------------------------------------
+//  Parameter     : deviceID              The CAN Disturbance Identifier
+//                  minMsgID              Start Id of message range
+//                  maxMsgID              End   Id of message range
+//  ------------------------------------------------------------------------------------------------
+//  Returncode    : return (1 = success/ 0 = failure)
+//**************************************************************************************************
+byte CommonCANDisturbanceLibrary_DisturbAllECUMessageswithoutNMH(int deviceID, dword startID, dword endID)
+{
+  byte result;
+  canDisturbanceSequence seq;
+  canDisturbanceFrameTrigger trg;
+  canDisturbanceTriggerRepetitions rep;
+  message 1 msg;
+  long triggerEnableFlags = 0;
+  long ret;
+  int count;
+  dword mask;
+
+  result = 1;
+  seq.clear();
+
+  rep.Cycles = 1;
+  rep.HoldOffCycles = 0;
+  rep.HoldOffRepetitions = 0;
+  rep.Repetitions = 0;
+  
+  // Output one dominant bit
+  //seq.AppendToSequence(ticksPerBit, 'd');
+
+  trg.SetMessage(msg, deviceID, 0);
+
+  if (startID & 0x80000000)   //extended ID
+  {
+    trg.IDE = 1;
+    mask = 0x10000000;
+  } 
+  else //standard ID
+  {
+    trg.IDE = 0;
+    mask = 0x400;
+  }
+
+  for (count = 10; count >=0; count--) 
+  {
+    if ((startID & mask) == (endID & mask)) 
+    {
+      if (startID & mask) 
+      {
+        trg.IDBase[count] = 1;
+      }
+      else 
+      {
+        trg.IDBase[count] = 0;
+      }
+    } 
+    else 
+    {
+      trg.IDBase[count] = -1;
+    }
+    
+    mask = mask >> 1;
+  }
+
+  if (startID & 0x80000000) 
+  {
+    //extended ID
+    for (count = 17; count >=0; count--) 
+    {
+      if ((startID & mask) == (endID & mask)) 
+      {
+        if (startID & mask) 
+        {
+          trg.IDExtended[count] = 1;
+        } 
+        else 
+        {
+          trg.IDExtended[count] = 0;
+        }
+      } 
+      else 
+      {
+        trg.IDExtended[count] = -1;
+      }
+      
+      mask = mask >> 1;
+    }
+  }
+
+  trg.TriggerFieldType = @CanDisturbance::Enums::FieldType::CRC;
+  trg.TriggerFieldOffset = 21;
+  
+  triggerEnableFlags |= sysvar::CanDisturbance::Enums::TriggerEnable::TriggerDirectionRx;
+  triggerEnableFlags |= sysvar::CanDisturbance::Enums::TriggerEnable::InvertedTrigger;
+  triggerEnableFlags |= sysvar::CanDisturbance::Enums::TriggerEnable::TriggerIfBitMissing;
+  
+  ret = canDisturbanceTriggerEnable(deviceID, trg, seq, rep, triggerEnableFlags);
+  
+  if (ret != 1)
+  {
+    result = 0;
+  }
+  
+  return result;
+}
+
+/// <GenericSysVarAccessToDeviceValues>
+int CommonCANDisturbanceLibrary_Get_Trigger_State(int deviceID)
+{
+  char sysVarNameSpace[1024];
+  long value;
+  long result;
+  snprintf(sysVarNameSpace, elCount(sysVarNameSpace), "CANDisturbanceInterface%d::Trigger", deviceID);
+  
+  result = sysGetVariableInt(sysVarNameSpace, "State", value);
+  
+  if(result == 0)
+  {
+    return value;
+  }
+  
+  return -1;
+}
+
+/// <GenericSysVarAccessToDeviceValues>
+int CommonCANDisturbanceLibrary_Get_Trigger_Count(int deviceID)
+{
+  char sysVarNameSpace[1024];
+  long value;
+  long result;
+ snprintf(sysVarNameSpace, elCount(sysVarNameSpace), "CANDisturbanceInterface%d::Trigger", deviceID);
+  
+  result = sysGetVariableInt(sysVarNameSpace, "Count", value);
+  
+  if(result == 0)
+  {
+    return value;
+  }
+  
+  return -1;
+}
+
+/// <GenericSysVarAccessToDeviceValues>
+int CommonCANDisturbanceLibrary_Get_Trigger_Cycle(int deviceID)
+{
+  char sysVarNameSpace[1024];
+  long value;
+  long result;
+ snprintf(sysVarNameSpace, elCount(sysVarNameSpace), "CANDisturbanceInterface%d::Trigger", deviceID);
+  
+  result = sysGetVariableInt(sysVarNameSpace, "Cycle", value);
+  
+  if(result == 0)
+  {
+    return value;
+  }
+  
+  return -1;
+}
+
+/// <GenericSysVarAccessToDeviceValues>
+int CommonCANDisturbanceLibrary_Get_Trigger_Source(int deviceID, char sourceAsString[])
+{
+  char sysVarNameSpace[1024];
+  long value;
+  long result;
+
+  snprintf(sysVarNameSpace, elCount(sysVarNameSpace), "CANDisturbanceInterface%d::Trigger", deviceID);
+  result = sysGetVariableInt(sysVarNameSpace, "Source", value);
+  
+  if(result == 0)
+  {
+    sysGetVariableDescriptionForValue(sysVarNameSpace, "Source", value, sourceAsString, elCount(sourceAsString));
+    return value;
+  }
+  
+  return -1;
+}
+
+/// <GenericSysVarAccessToDeviceValues>
+int CommonCANDisturbanceLibrary_Get_ChannelNo(int deviceID)
+{
+  char sysVarNameSpace[1024];
+  long value;
+  long result;
+
+  snprintf(sysVarNameSpace, elCount(sysVarNameSpace), "CANDisturbanceInterface%d", deviceID);
+  result = sysGetVariableInt(sysVarNameSpace, "ChannelNo", value);
+  
+  if(result == 0)
+  {
+    return value;
+  }
+  
+  return -1;
+}
+
+
+/// <FrameTrigger>
+//------------------------------------------------------------------------------------
+//Write the field definition 
+//
+//@param field - the index value of the field [in]
+//@param def   - the struct definition for the field parameter [inout]
+//@return      - the start position of the field within the stream without stuff bits
+//------------------------------------------------------------------------------------
+int CommonCANDisturbanceLibrary_Get_FieldDefinition_For(int field, struct FieldDefinition def)
+{
+  int returnValue;
+  
+  returnValue = -1;
+  
+  switch(field)
+  {
+    case 0:
+      def.offsetInField = 0;
+      def.offsetStream  = 0;
+      def.length = 1;      
+      returnValue = 0;
+      break;
+    case 1:       
+      def.offsetInField = 0;
+      def.offsetStream  = 1;
+      def.length = 11;      
+      returnValue = 1;
+      break;
+    case 2:       
+      def.offsetInField = 0;
+      def.offsetStream =14;
+      def.length = 18;
+      returnValue = 32;
+      break;
+    case 3:       
+      def.offsetStream = 12;
+      def.offsetInField = 0;
+      def.length = 1;
+      returnValue = 12;
+      break;
+    case 4: 
+      def.offsetStream = 13;
+      def.offsetInField = 0;
+      def.length = 1;
+      returnValue = 13;
+      break;
+    case 5: 
+      def.offsetStream = 32;
+      def.offsetInField = 0;
+      def.length = 1;
+      returnValue = 32;
+      break;
+    case 6: 
+      def.offsetStream = 33;
+      def.offsetInField = 0;
+      def.length = 1;
+      returnValue = 33;
+      break;
+      break;
+    case 7: 
+      def.offsetStream = 34;
+      def.offsetInField = 0;
+      def.length = 1;
+      returnValue = 34;
+      break;
+    case 8: 
+      def.offsetStream = 35;
+      def.offsetInField = 0;
+      def.length = 1;
+      returnValue = 35;
+      break;
+    case 9: 
+      def.offsetStream = 36;
+      def.offsetInField = 0;
+      def.length = 1;
+      returnValue = 36;
+      break;
+    case 10:
+      def.offsetStream = 37;
+      def.offsetInField = 0;
+      def.length = 4;
+      returnValue = 37;
+      break;
+    case 75:
+      def.offsetStream = 41 + 8 * 64;
+      def.offsetInField = 0;
+      def.length = 4;
+      returnValue = 41 + 8 * 64;
+      break;
+    case 76:
+      def.offsetStream = 41 + 8 * 64 + 4;
+      def.offsetInField = 0;
+      def.length = 21;
+      returnValue = 41 + 8 * 64 + 4;
+      break;
+    case 77:
+      def.offsetStream = 41 + 8 * 64 + 4 + 21;
+      def.offsetInField = 0;
+      def.length = 1;
+      returnValue = 41 + 8 * 64 + 4 + 21;      
+      break;
+    case 78:
+      def.offsetStream = 41 + 8 * 64 + 4 + 21 + 1;
+      def.offsetInField = 0;
+      def.length = 1;
+      returnValue = 41 + 8 * 64 + 4 + 21 + 1;            
+      break;
+    case 79:
+      def.offsetStream = 41 + 8 * 64 + 4 + 21 + 2;
+      def.offsetInField = 0;
+      def.length = 1;
+      returnValue = 41 + 8 * 64 + 4 + 21 + 1 + 2;            
+      break;
+    default:
+      break;
+  }
+  
+  if(field >= 11 && field <= 74)
+  {
+    def.offsetStream  = 41 + 8 * (field - 11);
+    def.offsetInField = 8 * (field - 11);
+    def.length = 8;
+    returnValue = 41 + 8 * (field - 11);
+  }
+  
+  if(returnValue < 0)
+  {
+    def.fieldIndex = @sysvar::CanDisturbance::Enums::FieldType::Invalid;
+  }
+  else
+  {
+    def.fieldIndex = field;
+  }
+  
+  return returnValue;
+  
+}
+
+/// <FrameTrigger>
+//------------------------------------------------------------------------------------
+//Set the current value to frame trigger value 
+//
+//@param fieldType      - the enumeration type of CanDisturbance::Enums::FieldType  [in]
+//@param valueAsString  - the value as string for the trigger field (e.g. "0x100x") [in]
+//@param frameTrigger   - the frame trigger object                                  [in]
+//@return               - return 1 if field set was possible, otherwise -1          [out]
+////------------------------------------------------------------------------------------
+int CommonCANDisturbanceLibrary_Set_FrameTrigger_Field(int fieldType, char valueAsString[], canDisturbanceFrameTrigger frameTrigger)
+{
+  struct FieldDefinition fieldDef;
+  long result;
+  result = CommonCANDisturbanceLibrary_Get_FieldDefinition_For(fieldType, fieldDef);
+  
+  if(result > 0)
+  {
+    result = CommonCANDisturbanceLibrary_Set_FrameTrigger_Field(fieldDef, valueAsString, frameTrigger);
+  }
+  else
+  {
+    result = -1;
+  }
+  
+  return result;
+}
+
+
+/// <FrameTrigger>
+//------------------------------------------------------------------------------------
+//Set the current value to frame trigger value 
+//
+//@param fieldDef       - the struct definition for the field parameter             [in]
+//@param valueAsString  - the value as string for the trigger field (e.g. "0x100x") [in]
+//@param framTrigger    - the frame trigger object                                  [in]
+//@return               - return 1 if field set was possible, otherwise -1          [out]
+////------------------------------------------------------------------------------------
+int CommonCANDisturbanceLibrary_Set_FrameTrigger_Field(struct FieldDefinition fieldDef, char valueAsString[], canDisturbanceFrameTrigger frameTrigger)
+{
+  char value[2];
+  long result;
+  
+  result = 1;
+  
+  switch(fieldDef.fieldIndex)
+  {
+    case 1:       
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, frameTrigger.IDBase);
+      break;
+    case 2:       
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, frameTrigger.IDExtended);
+      break;
+    case 3:       
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, value);
+      frameTrigger.RemoteBase = value[0];
+      break;
+    case 4: 
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, value);
+      frameTrigger.IDE = value[0];
+      break;
+    case 5:       
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, value);
+      frameTrigger.RemoteExtended = value[0];
+      break;
+    case 6: 
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, value);
+      frameTrigger.FDF = value[0];
+      break;
+    case 7: 
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString,  value);
+      frameTrigger.Reserved = value[0];
+      break;
+    case 8: 
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, value);
+      frameTrigger.BRS = value[0];
+      break;
+    case 9: 
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, value);
+      frameTrigger.ESI = value[0];
+      break;
+    case 10:
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, frameTrigger.DLC);
+      break;
+    case 75:
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, frameTrigger.StuffCount);
+      break;
+    case 76:
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, frameTrigger.CRC);
+      break;
+    case 77:
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, value);
+      frameTrigger.CRCDelimiter = value[0];
+      break;
+    case 78:
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, value);
+      frameTrigger.AckSlot = value[0];
+      break;
+    case 79:
+      CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, value);
+      frameTrigger.AckDelimiter = value[0];
+      break;
+    case 80:
+      break;
+    default:
+      if(fieldDef.fieldIndex >= 11 && fieldDef.fieldIndex <= 74)
+      {
+        CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(fieldDef, valueAsString, frameTrigger.Payload);
+      }
+      else
+      {
+        result = -1;
+      }
+      break;
+  }
+  
+  return result;
+}
+
+/// <FrameTrigger>
+////------------------------------------------------------------------------------------
+////Set the current sys var to the char buffer  
+//
+////@param field      - the struct definition for the field parameter [in]
+////@param fieldValue - the frame trigger value [out]
+////------------------------------------------------------------------------------------
+void CommonCANDisturbanceLibrary_Convert_String_Value_To_Trigger_Value(struct FieldDefinition field, char valueToWrite[], char fieldValue[])
+{
+  int  currLength;
+  int  i;
+  
+  currLength = strlen(valueToWrite);
+  
+  for(i = 0; i < field.length ; ++i)
+  {
+    if( i < currLength)
+    {
+       fieldValue[field.length - 1 - i + field.offsetInField] = valueToWrite[i] == '0' ? 0 : valueToWrite[i] == 'x' ? -1 : 1; 
+    }
+    else
+    {
+      fieldValue[field.length - 1 - i + field.offsetInField] = -1;
+    }
+  }
+}
+
+/// <SamplePointTest>
+////------------------------------------------------------------------------------------
+////Calculate the sample point by ticks (most cases measured) and calcuate the possible 
+////sample point that is configurabe for a baudrate with a given prescaler and quarz frequency.
+////
+////@param baudrate        - the baudrate the sample point was measured [in]
+////@param prescaler       - the prescaler which defines the possible sample points [in]
+////@param quarzFrequency  - the quarz frequency used for the CAN clock [in]
+////@param data            - containes the measured sample point and the calculated bit timings [inout]
+////@param ticksRemained   - count of remained ticks of the shorten bit [in]
+////@param ticksAll        - count of ticks before the bit was shorten [in]
+////@return - 1 if calculation was possible, otherwise 0
+////------------------------------------------------------------------------------------
+int CommonCANDisturbanceLibrary_Calculate_SamplePoint_For(float baudrate, int prescaler, int quarzFrequency, struct SamplePointTestMeasurementData data, int ticksRemained, int ticksAll)
+{
+  int result;
+  //--------------------------------------------------------------------------------------------
+  //Measurment errors
+  //--------------------------------------------------------------------------------------------
+  float tqSyncInPercent;  //tqSync error, because sampling is done in the middle of the tq
+  float tqError;          //time of one tq based on prescaler
+  
+  //--------------------------------------------------------------------------------------------
+  //Calculated values and values needed to calculate "correct" sample point
+  //--------------------------------------------------------------------------------------------  
+  int    tqAllForPrescaler;    // Count of possible TQs based on prescaler
+  float  bitTime;              // bit time depends on baudrate in ns
+  int    tqAll;                // Calculated count of TQs by calculated TSEG1 and TSEG2
+  float  calculatedSP;         // sample point calculated by TSEG1 and TSEG2 value
+  float  spPoint;              // Sample point measured by ticks 
+  int    newTseg1;             // Tseg1 calculated by the measured sample point with prescaler eq 1 and 80 MHz
+  int    newTseg2;             // Tseg2 calculated by the measured sample point with prescaler eq 1 and 80 MHz
+  double timeInBit;            // VH601 time in bit
+  double timeInBit2;           // Calc time based on prescaler and quarzFrequncy
+  double timeInBitDiff;        // Diff time between prescaler and VH6501 measurement
+  double prescalerTQTime;      // Time of one TQ for the prescaler based on quarzFrequency
+  //--------------------------------------------------------------------------------------------
+  result          = 1;
+  bitTime         = (1000000000.0 / baudrate);
+  prescalerTQTime = 1.0 / quarzFrequency * 1000 * prescaler; //in ns
+  
+  //-------------------------------------------------------------------------------------------------------------------------------
+  //Calc sample point the error frame was seen  
+  //-------------------------------------------------------------------------------------------------------------------------------
+  spPoint    = ticksRemained * 1.0 / ticksAll;
+  data.MeasuredSamplePoint = spPoint * 100;
+  
+  //-------------------------------------------------------------------------------------------------------------------------------
+  //Calc the difference of measured sample point and sample point based on prescaler
+  //-------------------------------------------------------------------------------------------------------------------------------
+  timeInBit     = ticksRemained * TICK_LENGTH;     //VH601 time in bit
+  newTseg1      = timeInBit / prescalerTQTime;  //Calc TSEG1 (inclusive SYNC-Field)
+  timeInBit2    = newTseg1 * prescalerTQTime;   //Calc time based prescaler TQ
+  timeInBitDiff = timeInBit - timeInBit2;       //Calc diff time between measurement and calculated sample point based on prescaler
+  
+  tqError  = prescalerTQTime * 100 / bitTime;
+  newTseg1 = spPoint * bitTime / prescalerTQTime;
+  newTseg2 = (newTseg1 + 1.0) / spPoint - newTseg1-1;
+  tqAll    = newTseg1 + newTseg2 + 1;
+  
+  tqAllForPrescaler = (bitTime / prescalerTQTime);
+  
+  if(tqAllForPrescaler * prescalerTQTime != bitTime)
+  {
+    write("Prescaler not possible %d", prescaler);
+    result = -1;
+  }
+  else
+  {
+    write("tqAll =%d tqAllForPrescalerOne =%d",tqAll, tqAllForPrescaler);
+    
+    if(tqAll != tqAllForPrescaler)
+    {
+     int delta;
+     delta = tqAll - tqAllForPrescaler;
+     write("delta =%d", delta);
+     newTseg1 += delta;
+     newTseg2 = tqAllForPrescaler - newTseg1-1;
+     tqAll    = newTseg1 + newTseg2 + 1;
+    }
+    write("tqAll =%d tqAllForPrescalerOne =%d",tqAll, tqAllForPrescaler);
+    //-------------------------------------------------------------------------------------------------------------------------------
+    
+    //-------------------------------------------------------------------------------------------------------------------------------
+    //Calc Tq difference for sample point, because sample point is inital within TQ / 2
+    //Is only for vector interfaces or if ECU also sample in the middle of the TQ
+    //-------------------------------------------------------------------------------------------------------------------------------
+    tqSyncInPercent = 1 * 100.0 / tqAll / 2;
+    //-------------------------------------------------------------------------------------------------------------------------------
+    
+    //-------------------------------------------------------------------------------------------------------------------------------
+    //Set measured and calcualted data 
+    //-------------------------------------------------------------------------------------------------------------------------------
+    calculatedSP = (newTseg1 + 1.0) / (newTseg1 + newTseg2 + 1.0);
+    
+    data.CalculatedSP    = calculatedSP * 100;
+    data.SamplePointMin  = data.CalculatedSP  - tqError;
+    data.SamplePointMax  = data.CalculatedSP;
+    data.TqError         = tqError;
+    data.TqSyncInPercent = tqSyncInPercent;
+    data.TicksRemained   = ticksRemained;
+    data.TicksAll        = ticksAll;
+    data.Tseg1           = newTseg1;
+    data.Tseg2           = newTseg2;
+    data.TqAll           = tqAll;
+    //-------------------------------------------------------------------------------------------------------------------------------
+  }
+  
+  return result;
+}
+
+/// <SamplePointTest>
+////------------------------------------------------------------------------------------
+////Shorten a defined bit within a frame sequence field
+////
+////@param field          - the field which contains the bit to shorten [in]
+////@param bitPosition    - the bit number of the bit within the field (0 - first bit; n - last bit) [in]
+////@param ticksToShorten - number of ticks the bit should be shorten [in]
+////@return - 1 bit was possible to shorten, otherwise 0
+////------------------------------------------------------------------------------------
+int CommonCANDisturbanceLibrary_Shorten_Bit(canDisturbanceFrameSequenceField field, int bitPosition, int ticksToShorten)
+{
+  int result;
+  
+  result = 1;
+  
+  if(field.BitSequence[bitPosition].segmentLength[0] - ticksToShorten < 5)
+  {
+    result = 0;
+  }
+  else
+  {
+    field.BitSequence[bitPosition].segmentLength[0] = field.BitSequence[bitPosition].segmentLength[0] - ticksToShorten;
+  }
+  
+  return result;
+}
+
+/// <SamplePointTest>
+////------------------------------------------------------------------------------------
+////Shorten a defined bit within a frame sequence field
+////
+////@param field           - the field which contains the bit to shorten [in]
+////@param bitPosition     - the bit number of the bit within the field (0 - first bit; n - last bit) [in]
+////@param ticksToLengthen - number of ticks the bit should be lengthen [in]
+////@return - 1 bit was possible to lengthen, otherwise 0
+////------------------------------------------------------------------------------------
+int CommonCANDisturbanceLibrary_Lengthen_Bit(canDisturbanceFrameSequenceField field, int bitPosition, int ticksToLengthen)
+{
+  int result;
+  
+  result = 1;
+  
+  if(field.BitSequence[bitPosition].segmentLength[0] + ticksToLengthen > 65535)
+  {
+    result = 0;
+  }
+  else
+  {
+    field.BitSequence[bitPosition].segmentLength[0] = field.BitSequence[bitPosition].segmentLength[0] + ticksToLengthen;  
+  }
+  
+  return result;
+}
+
+/// <SamplePointTest>
+////------------------------------------------------------------------------------------
+////Flip a bit to the opposit of the current bit value e.g. dominant -> recessive or recessvie -> dominant
+////
+////@param field            - the field which contains the bit to shorten [in]
+////@param bitPosition      - the bit number of the bit within the field (0 - first bit; n - last bit) [in]
+////@param overrideDominant - If the flipped value is recessive and domiant value should be overwrite a dominant set to 1, otherwise 0 [in]
+////@return - 1 if bit was flipped otherwise 0
+////------------------------------------------------------------------------------------
+int CommonCANDisturbanceLibrary_Flip_Bit(canDisturbanceFrameSequenceField field, int bitPosition, int overrideDominant)
+{
+  int result;
+  
+  result = 1;
+  
+  if(bitPosition < 0 || bitPosition >= field.FieldLength)
+  {
+    result = 0;  
+  }
+  else
+  {
+    if(field.BitSequence[bitPosition].segmentValue[0] == 'd')
+    {
+      field.BitSequence[bitPosition].segmentValue[0] = overrideDominant == 1 ? 'R' : 'r';  
+    }
+    else
+    {
+      field.BitSequence[bitPosition].segmentValue[0] = 'd';  
+    }
+  }
+  
+  return result;
+}
+
+/// <SamplePointTest>
+////------------------------------------------------------------------------------------
+////Set a specific bit value for a bit within a field
+////
+////@param field       - the field which contains the bit to shorten [in]
+////@param bitPosition - the bit number of the bit within the field (0 - first bit; n - last bit) [in]
+////@param segValue    - the value should be set  [in]
+////@return - 1 if bit was flipped otherwise 0
+////------------------------------------------------------------------------------------
+int CommonCANDisturbanceLibrary_Set_Bit_Value_To(canDisturbanceFrameSequenceField field, int bitPosition, enum SegmentValue segValue)
+{
+  int result;
+  
+  result = 1;
+  
+  if(bitPosition < 0 || bitPosition >= field.FieldLength)
+  {
+    result = 0;  
+  }
+  else
+  {
+    switch(segValue)
+    {
+      case eInvalidSegmentValue: result = 0; break;
+      case eDominantSegmentValue: field.BitSequence[bitPosition].segmentValue[0] = 'd'; break;
+      case eRecessiveSegmentValue: field.BitSequence[bitPosition].segmentValue[0] = 'r'; break;
+      case eRecessiveStressSegmentValue: field.BitSequence[bitPosition].segmentValue[0] = 'R'; break;
+    }
+  }
+  return result;
+}
+
+
+/// <AnalogDisturbance>
+//CANH_CANL∑¥Ω”π ’œ
+void InjectCANH_CANL_ReverseFault()
+{
+   @sysvar::CANDisturbanceInterface1::Switches::CANh_CANl_Swap::Value = 1;//Reverse
+   teststep("","CANH_CANL_Reverseπ ’œ");
+}
+/// <AnalogDisturbance>
+//“∆≥˝CANH_CANL∑¥Ω”π ’œ
+void RemoveCANH_CANL_ReverseFault()
+{
+   @sysvar::CANDisturbanceInterface1::Switches::CANh_CANl_Swap::Value = 0;//normal
+   teststep("","“∆≥˝CANH_CANL_Reverseπ ’œ");
+}
+/// <AnalogDisturbance>
+//CANH_Vbatπ ’œ
+void InjectCANH_VbatFault()
+{
+   @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Mode = @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Mode::VBat;
+   @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value::_0Ohm;
+  
+    teststep("","CANH_Vbatπ ’œ");
+}
+
+/// <AnalogDisturbance>
+//“∆≥˝CANH_Vbatπ ’œ
+void RemoveCANH_VbatFault()
+{
+
+    @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value::Off;
+    teststep("","“∆≥˝CANH_Vbatπ ’œ");
+  
+}
+/// <AnalogDisturbance>
+//CANH_GNDπ ’œ
+void InjectCANH_GNDFault()
+{
+   @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Mode = @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Mode::GND;
+   @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value::_0Ohm;
+   teststep("","CANH_GNDπ ’œ");
+}
+
+/// <AnalogDisturbance>
+//“∆≥˝CANH_GNDπ ’œ
+void RemoveCANH_GNDFault()
+{
+    @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value::Off;//Ω· ¯∏…»≈
+    teststep("","“∆≥˝CANH_GNDπ ’œ");
+
+}
+
+/// <AnalogDisturbance>
+//CANH_CANLπ ’œ
+void InjectCANH_CANLFault()
+{
+    @sysvar::CANDisturbanceInterface1::Resistors::CANh_CANl::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANh_CANl::Value::_0Ohm;
+    teststep("","CANH_CANLπ ’œ");
+}
+
+/// <AnalogDisturbance>
+//“∆≥˝CANH_CANLπ ’œ
+void RemoveCANH_CANLFault()
+{
+   @sysvar::CANDisturbanceInterface1::Resistors::CANh_CANl::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANh_CANl::Value::Off; //Ω· ¯∏…»≈
+   teststep("","“∆≥˝CANH_CANLπ ’œ");
+}
+
+/// <AnalogDisturbance>
+//CANL_Vbatπ ’œ
+void InjectCANL_VbatFault()
+{
+   @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Mode = @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Mode::VBat;
+   @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value::_0Ohm;
+   teststep("","CANL_Vbatπ ’œ");
+
+}
+/// <AnalogDisturbance>
+//“∆≥˝CANL_Vbatπ ’œ
+void RemoveCANL_VbatFault()
+{
+   @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value::Off;//Ω· ¯∏…»≈
+   teststep("","“∆≥˝CANL_Vbatπ ’œ");
+}
+
+/// <AnalogDisturbance>
+//CANL_GNDπ ’œ
+void InjectCANL_GNDFault()
+{
+   @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Mode = @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Mode::GND;
+   @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value::_0Ohm;
+   teststep("","CANL_GNDπ ’œ");
+}
+
+/// <AnalogDisturbance>
+//“∆≥˝CANL_GNDπ ’œ
+void RemoveCANL_GNDFault()
+{
+   @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value::Off;
+   teststep("","“∆≥˝CANL_GNDπ ’œ");
+}
+
+
+
+/// <AnalogDisturbance>
+//÷∆‘Ï CANH_CANL_BATπ ’œ
+void InjectCANH_CANL_BATFault()
+{
+   @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Mode = @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Mode::VBat;
+   @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value::_0Ohm;
+   @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Mode = @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Mode::VBat;
+   @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value::_0Ohm;
+   teststep("","CANH_CANL_BATπ ’œ");
+}
+
+/// <AnalogDisturbance>
+//“∆≥˝CANH_CANL_BATπ ’œ
+void RemoveCANH_CANL_BATFault()
+{
+  @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value::Off;//Ω· ¯∏…»≈
+  @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value::Off;
+  teststep("","“∆≥˝CANH_CANL_BATπ ’œ");
+}
+
+
+/// <AnalogDisturbance>
+//÷∆‘Ï CANH_CANL_GNDπ ’œ
+void InjectCANH_CANL_GNDFault()
+{
+   @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Mode = @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Mode::GND;
+   @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value::_0Ohm;
+   @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Mode = @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Mode::GND;
+   @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value::_0Ohm;
+   teststep("","CANH_CANL_GNDπ ’œ");
+}
+
+
+/// <AnalogDisturbance>
+//“∆≥˝CANH_CANL_GNDπ ’œ
+void RemoveCANH_CANL_GNDFault()
+{
+  @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANh_S::Value::Off;//Ω· ¯∏…»≈
+  @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value = @sysvar::CANDisturbanceInterface1::Resistors::CANl_S::Value::Off;
+  teststep("","“∆≥˝CANH_CANL_GNDπ ’œ");
+}
+

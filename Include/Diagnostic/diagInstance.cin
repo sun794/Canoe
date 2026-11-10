@@ -1,0 +1,595 @@
+/*@!Encoding:936*/
+includes
+{
+  #include "diagCommonClass.cin"
+}
+
+variables
+{
+  struct DtCArry
+  {
+    float time_occur;
+    dword DTC;
+    byte DTCStatus;
+  }OccurDTCArry[255];
+  int OccurDtcNum;//测试父子DTC时实际产生的期待的子DTC的数量
+  long gDiagHandle;//初始化CANTP层的句柄
+  dword DiagPrintTimes;//用来限制报告上打印的诊断请求次数，防止报告信息太多，打不开
+  float DtcCreattime,DtcStarttime,DtcEndtime;
+  float HistoryDtcCreatime;
+  byte RecNRC;//用于接收返回的NRC码
+   //Diagnostic Parametert
+  char DiagECUName[50]= "ROX_V01";
+  const word DiagrequestID = 0x743;//0x6E1
+  const word DiagresponseID =0x7C3;//0x6E9
+  
+  const dword DiagaddrMode = 0; //Normal mode 0  Extended mode 1
+  const dword DiagpaddingValue =0x55;//设置填充位的值
+  const dword DiagSTmin=0x14;//定义后面连续帧发送的时间间隔
+  const dword Diag_FlowControlFlag =1;//流控帧使能标志，0：禁止，1：使能
+  const dword Diag_BlockSize =0 ;//设置每次收到流控帧后，需要发送多少个连续帧，默认为0，表示发完连续帧为止，1表示每个流控帧后面只接收一个连续帧
+  const dword DiagP2Client = 150;
+  const dword DiagP2ExClient = 5050;
+      //TP层时间参数
+  const dword Diag_Ar_ms                                          =70;
+  const dword Diag_As_ms                                          =70;
+  const dword Diag_Br_ms                                          =70; 
+  const dword Diag_Bs_ms                                          =150;
+  const dword Diag_Cr_ms                                          =150; 
+  const dword Diag_Cs_ms                                          =150;
+    
+  const dword Diag_MaxRxLength                                    =4095;//默认CanTP最大接收长度，如果是CANFD是可以支持到4096以上的，根据系统变量CANFD的值会自动在CANTP.cin里面去配置，这里不需要动
+  
+}
+
+
+/// <StoredDataTransmission>
+
+
+/// <StoredDataTransmission>
+int  CheckDTCInexist(long CANTPHandle,dword DTC)
+{
+  /*
+  检查指定DTC是否存在
+  返回值  -1：ReadDTCByStatusMask Fail
+           0：当前读不到任何DTC
+           1：读到了指定DTC
+           2：读到了其他非指定DTC
+*/
+  int DTCNum,i;
+  dword m;
+  float timetemp;
+  int ret;
+  
+  struct DTCInfo DTCList[cMaxDTCNum];
+  ret=0;
+
+  DTCNum = ReadDTCByStatusMask(CANTPHandle,0x09,DTCList);//DTCMasK可以试试设置成0xFF
+  
+  if(DTCNum < 0)
+  {
+    return -1;
+  }
+  else if(DTCNum == 0)
+  {
+    timetemp=timeNowFloat()/100;
+    TestStep("","读不到任何当前和历史DTC，时间= %.0fms",timetemp);
+    write("读不到任何当前和历史DTC，时间= %.0fms",timetemp);
+    return 0;
+  }
+  else
+  {
+    for(i=0;i<DTCNum;i++)
+    {
+      if(DTCList[i].DTC == DTC)
+      { 
+       
+        timetemp=timeNowFloat()/100;
+        TestStep("","时间= %.0fms，读到了期待的DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ] ",timetemp,i,DTCList[i].DTC,DTCList[i].DTCStatus);
+        write("时间= %.0fms，读到了期待的DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]",timetemp,i,DTCList[i].DTC,DTCList[i].DTCStatus);
+        ret=1;
+      }
+      else
+      {
+        TestStep("","读到了其他的DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ] ",i,DTCList[i].DTC,DTCList[i].DTCStatus);
+        write("读到了其他的DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]",i,DTCList[i].DTC,DTCList[i].DTCStatus);
+     
+      }
+   }
+    if(ret!=1)
+         return 2;
+  }
+ return 1;
+}
+/// <StoredDataTransmission>
+int  CheckDTCAferErase(long CANTPHandle)//相比ClearDTCandCheckDTCInexist(dword DTC)，这里只关注擦除后判断是否还有DTC，不指定某一个
+{
+  int DTCNum,i;
+  float timetemp;
+  struct DTCInfo DTCList[cMaxDTCNum];
+  DTCNum = ReadDTCByStatusMask(CANTPHandle,0x09,DTCList);
+  
+  if(DTCNum < 0)
+  {
+    return -1;
+  }
+  else if(DTCNum == 0)
+  {
+    timetemp=timeNowFloat()/100;
+    write("当前读不到任何DTC，时间= %.0fms",timetemp);
+    testStep("","当前读不到任何DTC，时间= %.0fms",timetemp);
+    return 1;
+  }
+  else
+  {
+    for(i=0;i<DTCNum;i++)
+    {
+      TestStep("","当前仍然读到了DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ] ",i,DTCList[i].DTC,DTCList[i].DTCStatus);
+      write("当前仍然读到了DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]",i,DTCList[i].DTC,DTCList[i].DTCStatus);
+      
+   }
+    return 0;
+   }
+   
+  }
+
+
+/// <StoredDataTransmission>
+int CheckDTCIsCurrentFault(dword DTC)
+/*
+  检查指定DTC是否为当前故障
+  返回值  -1：ReadDTCByStatusMask Fail
+           0：读到其他非指定DTC
+           1：指定DTC是当前故障
+           2：指定DTC是非当前故障(也不一定是历史故障)
+*/
+{
+  int DTCNum,i;
+  dword m;
+  float timetemp;
+  struct DTCInfo DTCList[cMaxDTCNum];
+ 
+  DTCNum = ReadDTCByStatusMask(gDiagHandle,0x09,DTCList);//mask=0x01就可以读到当前DTC
+  if(DTCNum < 0)
+  {
+    return -1;
+  }
+  for(i=0;i<DTCNum;i++)
+  {
+    
+    //teststep("","Occur DTC[%d]:0x%06X",i,DTCList[i].DTC);
+   // write("","Occur DTC[%d]:0x%06X",i,DTCList[i].DTC);
+    if(DTCList[i].DTC == DTC)
+    {
+      if((DTCList[i].DTCStatus & 0x01) == 1)//如果跟mask 0x01相与为1，那么说明是当前DTC
+      { 
+        
+        TestStep("","读到了期待的当前DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]",i,DTCList[i].DTC,DTCList[i].DTCStatus);
+        write("读到了期待的当前DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]",i,DTCList[i].DTC,DTCList[i].DTCStatus);
+        return 1;
+      }
+      else
+      { 
+        
+        timetemp=timeNowFloat()/100;
+        TestStep("","读到了期待的DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]，非当前DTC！时间= %.0fms",i,DTCList[i].DTC,DTCList[i].DTCStatus,timetemp);
+        write("读到了期待的DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]，非当前DTC！时间= %.0fms",i,DTCList[i].DTC,DTCList[i].DTCStatus,timetemp);
+      
+       return 2;
+      }
+    }
+    else
+    {
+    
+      timetemp=timeNowFloat()/100;
+      TestStep("","读到了其他DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]，时间= %.0fms",i,DTCList[i].DTC,DTCList[i].DTCStatus,timetemp);
+      write("读到了其他DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]，时间= %.0fms",i,DTCList[i].DTC,DTCList[i].DTCStatus,timetemp);
+    }
+  }
+  
+  return 0;
+}
+
+
+/// <StoredDataTransmission>
+int CheckDTCIsHistoryFault(dword DTC)
+/*
+  检查指定DTC是否为历史故障
+  返回值  -1：ReadDTCByStatusMask Fail
+           0：指定DTC不是历史故障
+           1：指定DTC是历史故障
+           2：指定DTC是当前故障
+*/
+{
+  int DTCNum,i;
+  dword m;
+  float timetemp;
+  struct DTCInfo DTCList[cMaxDTCNum];
+ 
+  DTCNum = ReadDTCByStatusMask(gDiagHandle,0x09,DTCList);
+  if(DTCNum < 0)
+  {
+    return -1;
+  }
+  for(i=0;i<DTCNum;i++)
+  {
+    if(DTCList[i].DTC == DTC)
+    {
+      if((DTCList[i].DTCStatus & 0x01) == 0)//如果跟mask 0x01相与为0，那么说明不是当前DTC
+      {
+       
+        TestStep("","读到了期待的历史DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]",i,DTCList[i].DTC,DTCList[i].DTCStatus);
+        write("读到了期待的历史DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]",i,DTCList[i].DTC,DTCList[i].DTCStatus);
+        
+        return 1;
+      }
+      else
+      {
+        
+        timetemp=timeNowFloat()/100;
+        TestStep("","读到了期待的DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]，状态为当前DTC，时间= %.0fms",i,DTCList[i].DTC,DTCList[i].DTCStatus,timetemp);
+        write("读到了期待的DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]，状态为当前DTC，时间= %.0fms",i,DTCList[i].DTC,DTCList[i].DTCStatus,timetemp);
+  
+       return 2; 
+       }
+               
+    }
+    else
+    {
+      timetemp=timeNowFloat()/100;
+      TestStep("","读到了其他的DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]，时间= %.0fms",i,DTCList[i].DTC,DTCList[i].DTCStatus,timetemp);
+      write("读到了其他的DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]，时间= %.0fms",i,DTCList[i].DTC,DTCList[i].DTCStatus,timetemp);
+  
+    }
+  }
+  return 0;
+}
+
+
+
+/// <StoredDataTransmission>
+int ClearDTCandCheckDTCInexist(dword DTC)
+{
+  byte GroupofDTC[3] ={0XFF,0XFF,0XFF}; 
+  int result;
+  
+  if((result=ClearDiagnosticInformation(gDiagHandle,GroupofDTC))<0)
+  {
+    
+    write("result = %d ，擦除故障码失败，返回NRC= 0x%02X ",result,RecNRC);
+    testStepFail("","result = %d ，擦除故障码失败，返回NRC= 0x%02X ",result,RecNRC);
+    return -1;
+  }
+  else
+  {
+    write("擦除执行成功后，等待1s后再次读取故障码");
+    testStepPass("","擦除执行成功后，等待1s后再次读取故障码");
+  }
+  testWaitForTimeout(1000);
+  if((result=CheckDTCInexist(gDiagHandle,DTC))==0)
+  {
+   // testStepPass("","执行清除故障码操作后，被测设备无故障码[ 0x%06X ]",DTC);
+   // write("执行清除故障码操作后，被测设备无故障码[ 0x%06X ]",DTC);
+    return 0;
+  }
+  else if((result=CheckDTCInexist(gDiagHandle,DTC))==1)
+  {
+    testStepFail("","执行清除故障码操作后，被测设备仍然存在该指定故障码[ 0x%06X ]",DTC);
+    write("执行清除故障码操作后，被测设备仍然存在该指定故障码[ 0x%06X ]",DTC);
+    return 1;
+  }
+  else
+  {
+   // testStep("","执行清除故障码操作后，被测设备仍然存在其他故障码");
+  //  write("执行清除故障码操作后，被测设备仍然存在其他故障码");
+    return 2;
+  }
+}
+
+/// <StoredDataTransmission>
+int CheckDTCGeneratedTime(dword DTC)
+{
+  int result;
+  float timetemp;
+  const int timeout=5*1000;
+  DtcStarttime=timeNowfloat();
+  while((timeNowfloat()-DtcStarttime)<timeout*100)
+  {
+    if((result = CheckDTCIsCurrentFault(DTC))<0)
+    {
+     // testStep("","目标DTC没有出现,期待出现");
+     // write("目标DTC没有出现,期待出现");
+     
+    }
+    else if(result==0||result==2)
+    {
+      continue;
+    }
+    else
+    {
+      timetemp=timeNowfloat();
+      DtcCreattime=(timetemp-DtcStarttime)/100;
+      testStepPass("","目标当前DTC出现时间= %0.2fms，期待出现",timetemp/100);
+      write("目标当前DTC出现时间= %0.2fms，期待出现",timetemp/100);
+      return 1;
+    }
+  }
+ 
+  testStep("","在%ds内都没有出现目标当前DTC---->[ 0x%06X ]",timeout/1000,DTC);
+  write("在%ds内都没有出现目标当前DTC---->[ 0x%06X ]",timeout/1000,DTC);
+  return 0;
+}
+
+
+/// <StoredDataTransmission>
+int CheckDTCNotGeneratedTime(dword DTC)
+{
+  int result;
+  float timetemp;
+  const int timeout=10*1000;//改这里的时间要注意小康硬开关的长按的时间，这里减少可能会影响硬开关DTC的产生，根据实际情况调整
+  DtcStarttime=timeNowfloat();
+  while((timeNowfloat()-DtcStarttime)<timeout*100)
+  {
+    if((result = CheckDTCIsCurrentFault(DTC))<0)
+    {
+      //testStep("","目标DTC没有出现,期待不出现！");
+     // write("目标DTC没有出现,期待不出现！");
+    }
+    else if(result==0||result==2)
+    {
+      continue;
+    }
+    else 
+    {
+      timetemp=timeNowfloat();
+      DtcCreattime=(timetemp-DtcStarttime)/100;
+      testStepFail("","目标当前DTC出现时间= %0.2fms，期待不出现！",timetemp/100);
+      write("目标当前DTC出现时间= %0.2fms，期待不出现！",timetemp/100);
+      return 0;
+    }
+  }
+   testStep("","在%ds内都没有出现目标当前DTC---->[ 0x%06X ]",timeout/1000,DTC);
+   write("在%ds内都没有出现目标当前DTC---->[ 0x%06X ]",timeout/1000,DTC);
+   return 1;
+}
+
+/// <StoredDataTransmission>
+int CheckDTCRecoveryTime(dword DTC)//这个函数是判断超时时间内是否会置1，如果置1就直接返回，中间有其他状态都会继续运行，不影响最终结果的判断
+{
+  int result;
+  float timetemp;
+  const int  timeout=5*1000;
+  DtcStarttime=timeNowfloat();
+  while(timeNowfloat()-DtcStarttime<timeout*100)
+  {
+    if((result = CheckDTCIsHistoryFault(DTC))<0)
+    {
+      //testStep("","目标历史DTC没有出现,期待不出现！");
+     // write("目标历史DTC没有出现,期待不出现！");
+    }
+    else if(result==0||result==2)//2表示仍然为当前DTC
+    {
+      continue;
+    }
+     else
+    {
+      timetemp=timenowfloat();
+      HistoryDtcCreatime=(timetemp-DtcStarttime)/100;
+      testStep("","目标历史DTC出现时间= %0.2fms",timetemp/100);
+      write("目标历史DTC出现时间= %0.2fms",timetemp/100);
+      return 1;
+    }
+  }
+ 
+  testStep("","在%ds内都没有出现目标历史DTC---->[ 0x%06X ]",timeout/1000,DTC);
+  write("在%ds内都没有出现目标历史DTC---->[ 0x%06X ]",timeout/1000,DTC);
+  return 0;
+}
+
+
+/// <StoredDataTransmission>
+/**************************************************
+  返回值   0--正响应
+          -1--非panding负响应
+          -2--响应DLC为0
+          -3--非预期响应
+          -4--未知错误 见testWaitForTextEvent
+          -5--超时
+**************************************************/
+
+
+int CheckDiagFuncDiabled()//用于有些车厂规定，诊断电压条件不满足时关闭诊断，这时可以通过请求读故障码，看返回是否为NRC来判断是否禁止诊断功能，从而测试出诊断开启电压
+{ 
+  byte GroupofDTC[3] ={0XFF,0XFF,0XFF}; 
+  int checkResult;
+  //checkResult = ReadFaultMemory(gDiagHandle,0x02,0x09);//也可以换成其他的诊断请求
+  checkResult = ClearDiagnosticInformation(gDiagHandle,GroupofDTC);//东风小康好像是诊断关闭时无法擦除，返回NRC
+  if(checkResult== -5)
+  {
+    return -5;//超时，未回复
+  }
+  else if(checkResult == -4)
+  {
+    return -4;//未知错误
+  }
+  else if(checkResult == -1)
+  {
+    return -1;//有非pending的NRC ---->非NRC 0x78
+  }
+  else if(checkResult == 0)
+  {
+    return 0;//有正反馈
+  }
+  else
+  {
+    return checkResult;
+  }
+}
+
+
+/// <StoredDataTransmission>
+
+int CheckCurrentAgeingTime(dword DTC,byte DTCExtDataRecordNumber,int Requrietimes,int AgingExpecttime,int AgingDataPos,int AgedExpecttime,int AgedDataPos)
+{
+  
+  if(ReadDTCExtDataRecord(gDiagHandle,DTC,DTCExtDataRecordNumber)<0)
+  {
+    
+    return -1;
+  }
+  else   
+  {
+    if(AgingExpecttime<Requrietimes)//Requrietimes是指客户规范要求老化次数是多少
+    {
+      if(ExtDataRecordList.ExtRecordList[AgingDataPos]==AgingExpecttime)
+      {  
+       teststepPass("","期望当前老化计数 = 0x%02X,实际读到老化计数为 = 0x%02X",AgingExpecttime,ExtDataRecordList.ExtRecordList[AgingDataPos]);
+       write("期望当前老化计数 = 0x%02X,实际读到老化计数为 = 0x%02X",AgingExpecttime,ExtDataRecordList.ExtRecordList[AgingDataPos]);
+      }
+     else
+      {
+       write("期望当前老化计数 = 0x%02X,实际读到老化计数为 = 0x%02X",AgingExpecttime,ExtDataRecordList.ExtRecordList[AgingDataPos]);
+       teststepFail("","期望当前老化计数 = 0x%02X,实际读到老化计数为 = 0x%02X",AgingExpecttime,ExtDataRecordList.ExtRecordList[AgingDataPos]);
+       return 0;
+      }
+    }
+    else
+    {
+       if(ExtDataRecordList.ExtRecordList[AgingDataPos]==0)//老化完成后在最后一次读当前老化计数器应该为0
+      {  
+       teststepPass("","期望当前老化计数 = 0x%02X,实际读到老化计数为 = 0x%02X",AgingExpecttime,ExtDataRecordList.ExtRecordList[AgingDataPos]);
+       write("期望当前老化计数 = 0x%02X,实际读到老化计数为 = 0x%02X",AgingExpecttime,ExtDataRecordList.ExtRecordList[AgingDataPos]);
+      }
+     else
+      {
+       write("期望当前老化计数 = 0x%02X,实际读到老化计数为 = 0x%02X",AgingExpecttime,ExtDataRecordList.ExtRecordList[AgingDataPos]);
+       teststepFail("","期望当前老化计数 = 0x%02X,实际读到老化计数为 = 0x%02X",AgingExpecttime,ExtDataRecordList.ExtRecordList[AgingDataPos]);
+       return 0;
+      }
+    }
+    
+    if(DTCExtDataRecordNumber==0xFF)
+    {
+      if(ExtDataRecordList.ExtRecordList[AgedDataPos]==AgedExpecttime)//已老化计数器加1
+     {  
+     teststepPass("","期望已老化计数 = 0x%02X,实际读到已老化计数为 = 0x%02X",AgedExpecttime,ExtDataRecordList.ExtRecordList[AgedDataPos]);
+     write("期望已老化计数 = 0x%02X,实际读到已老化计数为 = 0x%02X",AgedExpecttime,ExtDataRecordList.ExtRecordList[AgedDataPos]);
+     }
+    else
+     {
+       write("期望已老化计数 = 0x%02X,实际读到已老化计数为 = 0x%02X",AgedExpecttime,ExtDataRecordList.ExtRecordList[AgedDataPos]);
+       teststepFail("","期望已老化计数 = 0x%02X,实际读到已老化计数为 = 0x%02X",AgedExpecttime,ExtDataRecordList.ExtRecordList[AgedDataPos]);
+       return 0;
+     }
+    }
+    
+    }
+    return 1;
+}
+
+
+/// <TestFatherAndSonDtc>
+int CheckDTCArryIsCurrentFault(dword DTCArry[])
+/*
+  检查指定DTC是否为当前故障
+  返回值  -1：ReadDTCByStatusMask Fail
+           0：读到其他非指定DTC
+           1：指定DTC组是当前故障
+           2：指定DTC组是非当前故障(也不一定是历史故障)
+*/
+{
+  int DTCNum,i,j;
+  dword m;
+  float timetemp;
+  struct DTCInfo DTCList[cMaxDTCNum];
+ 
+  DTCNum = ReadDTCByStatusMask(gDiagHandle,0x09,DTCList);//mask=0x01就可以读到当前DTC
+  if(DTCNum < 0)
+  {
+    return -1;
+  }
+  
+  for(i=0;i<DTCNum;i++)
+  {
+    
+    for(j=0;j<elcount(DTCArry);j++)
+    {
+      
+      if(DTCList[i].DTC == DTCArry[j])
+     {
+      if((DTCList[i].DTCStatus & 0x01) == 1)//如果跟mask 0x01相与为1，那么说明是当前DTC
+      { 
+        
+        TestStep("","读到了期待的当前DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]",i,DTCList[i].DTC,DTCList[i].DTCStatus);
+        write("读到了期待的当前DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]",i,DTCList[i].DTC,DTCList[i].DTCStatus);
+        OccurDTCArry[OccurDtcNum++].DTC=DTCArry[j];//获取DTC码存储到结构体变量数组中
+        OccurDTCArry[OccurDtcNum++].DTCStatus=DTCList[i].DTCStatus;////获取DTC状态码存储到结构体变量数组中
+        return 1;
+        }
+      else
+      { 
+        
+        timetemp=timeNowFloat()/100;
+        TestStep("","读到了期待的DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]，非当前DTC！时间= %.0fms",i,DTCList[i].DTC,DTCList[i].DTCStatus,timetemp);
+        write("读到了期待的DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]，非当前DTC！时间= %.0fms",i,DTCList[i].DTC,DTCList[i].DTCStatus,timetemp);
+        return 2;
+    
+      }
+    }
+    else
+    {
+      m++;
+      if(m%64==0)//64次读打印一次
+      {
+        timetemp=timeNowFloat()/100;
+        TestStep("","读到了其他DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]，时间= %.0fms",i,DTCList[i].DTC,DTCList[i].DTCStatus,timetemp);
+        write("读到了其他DTC[%d]：[ 0x%06X ]---> DTCStatus：[ 0x%02X ]，时间= %.0fms",i,DTCList[i].DTC,DTCList[i].DTCStatus,timetemp);
+      }
+    }
+    }
+  }
+  
+  return 0;
+}
+
+/// <TestFatherAndSonDtc>
+int CheckDTCArryGeneratedTime(dword DTCArry[])
+{
+  int result;
+  float timetemp;
+  const int timeout=5*1000;
+  OccurDtcNum=0;//每次需要先初始化一下
+  DtcStarttime=timeNowfloat();
+  while((timeNowfloat()-DtcStarttime)<timeout*100)
+  {
+    if((result = CheckDTCArryIsCurrentFault(DTCArry))<0)
+    {
+     // testStep("","目标DTC没有出现,期待出现");
+     // write("目标DTC没有出现,期待出现");
+     
+    }
+    else if(result==0||result==2)
+    {
+      continue;
+    }
+    else 
+    {
+      timetemp=timeNowfloat();
+      DtcCreattime=(timetemp-DtcStarttime)/100;
+      OccurDTCArry[OccurDtcNum].time_occur=DtcCreattime;
+      testStepPass("","目标DTC Group中的当前DTC[ 0x%06X ],产生时间= %0.2fms",OccurDTCArry[OccurDtcNum].DTC,timetemp/100);
+      write("目标DTC Group中的当前DTC[ 0x%06X ],产生时间= %0.2fms",OccurDTCArry[OccurDtcNum].DTC,timetemp/100);
+    }
+  }
+  
+   if(OccurDtcNum!=elcount(DTCArry))
+  {
+    write("期望会产生%个DTC，实际只产生了%d个DTC",elcount(DTCArry),OccurDtcNum);
+  }
+  else if(OccurDtcNum==0)
+  {
+    testStep("","在%ds内都没有出现目标DTC Group中的任意当前DTC",timeout/1000);
+    write("在%ds内都没有出现目标DTC Group中的任意当前DTC",timeout/1000);
+  }
+  return 0;
+}

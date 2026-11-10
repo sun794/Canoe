@@ -1,0 +1,72 @@
+/*@!Encoding:936*/
+
+
+/// <Logging>
+variables
+{
+  char TimeString[100];//记录log的时间，格式:year_month_date_hh_mm_ss
+  char LoggingBLockName[50]="Logging";//定义你在分析窗口里建立的日志记录块的名称
+  char logFile[500];
+}
+
+/// <Logging>
+void loggingStart(char testCaseTitle[])
+{
+  char reflogfilename[200];
+  stopLogging(LoggingBLockName);
+  snprintf(logFile,elCount(logFile),"Report/%s/LogFiles/%s.asc", TimeString, testCaseTitle);//这里为啥一定其实路径从Report开始，因为这里的路径也是指定了日志保存的位置，而这个初始化地址是以.cfg的位置来判定的
+  setLogFileName(LoggingBLockName,logFile);//支持新建路径和文件，而这里的初始化路径是这个项目工程文件，也就是CFG文件所在的目录，跟保存日志的时候默认的初始化路径参照物不一样，那个是XML报告所在目录(而如果有主动执行TestReportFileName()，那么生成的报告就会在这个路径下，一般默认报告路径就在xvt或者xml脚本目录下）
+  startLogging(LoggingBLockName);
+  snprintf(reflogfilename,elCount(reflogfilename),"./LogFiles/%s.asc",testCaseTitle);
+ // write("%s",reflogfilename);
+  testReportAddExternalRef("url","TRACE",reflogfilename); //当前路径为html报告所在位置，因此reflogfilename的路径才是Trace的路径
+  
+}
+
+
+
+/// <Logging>
+void loggingStop()
+{
+  stopLogging(LoggingBLockName);
+  
+}
+
+/// <TestControl>
+void StartToLogging()
+{ 
+  //开始记录数据
+  char testCaseTitle[100];
+  testGetCurrentTestCaseTitle(testCaseTitle, elcount(testCaseTitle));
+  loggingStart(testCaseTitle);
+  testWaitForTimeout(1000);
+  
+}
+
+/// <TestControl>
+void StopToLogging()
+{
+  //结束记录
+  testWaitForTimeout(1000);
+  loggingStop();
+  
+}
+
+
+
+void InitReportAndLog(char reportTitle[ ])
+{
+  char reportFileName[256];
+ 
+  long tm[9];
+  getLocalTime(tm);
+  snprintf(TimeString,elCount(TimeString),"%d_%02d_%02d_%02d_%02d_%02d",tm[5]+1900,tm[4]+1,tm[3],tm[2],tm[1],tm[0]);
+  
+  snprintf(reportFileName,elCount(reportFileName),"Report\\%s\\%s",TimeString,reportTitle);//这个将报告另外存在你指定的地方，因为默认你新建的那个xml脚本每次测试都会覆盖
+  TestReportFileName(reportFileName);//支持新建路径和文件
+  sysSetVariableString(sysvar::FlashPannel::ReportPath,reportFileName);//将目标路径记录，用于打开报告
+ 
+  testModuleTitle(reportTitle);
+   
+}
+

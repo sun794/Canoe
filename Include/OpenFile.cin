@@ -1,0 +1,598 @@
+/*@!Encoding:936*/
+variables
+{
+  
+  struct SegmentInfo
+  {
+    dword Address;
+    byte Data[5*1024*1024];//存储刷写数据5M
+    dword DataLength;
+    byte SegmentCrc[512];//比博的签名校验是CRC32，只需要把长度为384的签名数组前面4个字节填充4字节CRC值
+  };
+  
+  struct FlashFileInfo
+  {
+    int SegmentNumber;
+    struct SegmentInfo Segment[10];
+    dword DataLen;
+    byte Flash_Data[5*1024*1024];//存储刷写数据5M
+    byte TotalFileCrc[512];//比博的签名校验是CRC32，只需要把长度为384的签名数组前面4个字节填充4字节CRC值
+    byte signature[513];
+    dword CurrentAddress;
+  };
+
+  enum Status{False=0, True=1};
+  
+  int ALLFileSegment;//APP文件总共段数
+}
+
+int CheckHexFileSuffix (char filePath[])
+{
+    int result;
+    int fileLen;
+    int filelentmp;
+    fileLen=0;
+    result = 0;
+    fileLen = strlen(filePath);
+    filelentmp=fileLen;
+    if (fileLen < 5) return 0;
+
+    fileLen--;
+
+    if (((filePath[fileLen] == 'x')) || (filePath[fileLen] == 'X'))
+    {
+        fileLen--;
+
+        if (((filePath[fileLen] == 'e')) || (filePath[fileLen] == 'E'))
+        {
+            fileLen--;
+
+            if ((filePath[fileLen] == 'h') || (filePath[fileLen] == 'H'))
+            {
+                fileLen--;
+
+                if (filePath[fileLen] == '.')
+                {
+                    result = 1;
+                    write("Update FileType: %c%c%c",filePath[filelentmp-3],filePath[filelentmp-2],filePath[filelentmp-1]);
+                }
+            }
+        }
+    }
+    
+    return result;
+}
+//处理Hex文件
+enum Status GetHexfiledata(char path[], struct FlashFileInfo flashFile)
+{
+  int i,j;
+  dword tmpaddress;
+  char strLine[256];
+  char strData[256];
+  byte dataBuffer[256]; //临时存放转换得到的字节数据
+  byte isFirstAddress;
+  
+  dword baseAddress;  //为Hex文件准备的基地址
+  int LastDataLength;//储存上一段数据长度，用来检查本地地址和上次地址是否连续
+  //byte AddressInfo[0x10000][4];//储存每段信息的起始地址
+ // byte SizeInfo[0x10000][4];//储存每段信息的长度
+  dword AddressMemery;//储存上一个地址长度的临时变量
+  
+  dword handle;
+  handle = openFileRead(path,0); // 0-文本模式， 1-二进制模式
+  if(handle==0)
+  {
+    write("错误，文件打开失败！\n文件路径：%s\n 文件句柄：%d",path, handle);  
+    return False;
+  }
+  flashFile.DataLen = 0;
+  flashFile.SegmentNumber=0;
+  baseAddress=0;
+  AddressMemery=0;
+  isFirstAddress = 0;
+  
+  do
+  { 
+    if(!fileGetString(strLine,255,handle))
+    {
+      break;
+    }
+
+    memcpy_off(strData, 0, strLine, 1, elcount(strLine)-1);//strLine第0位是字符：所以偏移一位
+        
+    Char2Byte(strData, dataBuffer);
+        
+    switch(dataBuffer[3]&0x0f)
+    {
+      case 0x00:    //数 据 记录（Data Record）
+        if(isFirstAddress == 0)
+        {
+          isFirstAddress = 1;
+          flashFile.SegmentNumber = 1;  
+          AddressMemery = baseAddress + dataBuffer[1]*0x100 + dataBuffer[2];//80 04 00 00
+          //AddressMemery = baseAddress;
+          flashFile.Segment[flashFile.SegmentNumber-1].Address = baseAddress + dataBuffer[1]*0x100 + dataBuffer[2];
+          LastDataLength = dataBuffer[0]; // 0x20  
+          flashFile.Segment[flashFile.SegmentNumber-1].DataLength = dataBuffer[0];// 0x20
+          flashFile.CurrentAddress=flashFile.Segment[flashFile.SegmentNumber-1].Address; 
+        }
+        else
+        {
+          tmpaddress = baseAddress + dataBuffer[1]*0x100 + dataBuffer[2];
+          if(tmpaddress-AddressMemery!=LastDataLength)    
+          {                                               
+            flashFile.SegmentNumber+=1;
+            flashFile.Segment[flashFile.SegmentNumber-1].Address = baseAddress + dataBuffer[1]*0x100 + dataBuffer[2];
+            flashFile.Segment[flashFile.SegmentNumber-1].DataLength = dataBuffer[0];
+            flashFile.CurrentAddress=flashFile.Segment[flashFile.SegmentNumber-1].Address; 
+          }
+          else
+          {
+            flashFile.Segment[flashFile.SegmentNumber-1].DataLength += dataBuffer[0];  //如果地址连续，当前Segment长度需要加上当前行的数据长度
+          }
+          LastDataLength = dataBuffer[0];
+          AddressMemery  = baseAddress + dataBuffer[1]*0x100 + dataBuffer[2];
+          
+        }
+        for(i=0;i< dataBuffer[0];i++)
+        {
+            flashFile.Flash_Data[flashFile.DataLen+i]=dataBuffer[i+4] + ErrorData;//  flashFile.Flash_Data可用于整体文件校验
+            flashFile.Segment[flashFile.SegmentNumber-1].Data[flashFile.Segment[flashFile.SegmentNumber-1].DataLength - LastDataLength + i]=dataBuffer[i+4]+ ErrorData;//flashFile.Segment[flashFile.SegmentNumber-1].data可用于将每页的数据取到缓存区，然后可以在后面计算每页的校验值来比较ECU返回校验值
+            if(flashFile.CurrentAddress>=0xA05FFF60&&flashFile.CurrentAddress<=0xA05FFF80)
+            {    //  write("flashFile.CurrentAddress=0x%X  dataBuffer[%d]=0x%X", flashFile.CurrentAddress,i+4,dataBuffer[i+4]);
+             if(flashFile.CurrentAddress==0xA05FFF60)
+            {
+            for(j=0;j< elcount(ResolveSparePartNumberData);j++)
+            {
+             ResolveSparePartNumberData[j]= dataBuffer[j+4];
+            //write("dataBuffer[%d]=0x%X",j+4,dataBuffer[j+4]);
+           // write("ResolveSparePartNumberData[%d]=0x%X",j,ResolveSparePartNumberData[j]);
+            }
+           }
+          }
+          flashFile.CurrentAddress++;
+         
+        }
+ 
+       // write("flashFile.Segment[%d].DataLength =%d, LastDataLength =%d,i= %d",flashFile.SegmentNumber-1,flashFile.Segment[flashFile.SegmentNumber-1].DataLength,LastDataLength,i);
+         
+        flashFile.DataLen+=i;
+        break;
+      case 0x02: //扩展段地址 记录（ExtendedSegment Address Record）左移4bit
+        baseAddress = dataBuffer[4]*0x1000 + dataBuffer[5]*0x10;
+        break;
+      case 0x04://04 – 扩展线性地址 记录（Extended Linear Address Record）
+        baseAddress = dataBuffer[4]*0x1000000 + dataBuffer[5]*0x10000;
+        break;
+      default: 
+         //if(dataBuffer[3]&0x0f==0x01)//这里加了判断好像就跳不进去了，猜测是while循环马上退出了导致还没来得及打印
+             write("Occur Other Recording Type = 0x%02x",dataBuffer[3]&0x0f);
+         // else if(dataBuffer[3]&0x0f==0x05)
+          //{
+            // write("Start linear address recording = %02x",dataBuffer[3]&0x0f);
+         // }
+        break;
+    }
+  }while((strLine[7]-0x30)==0);//strLine[7]一般为'0'(Hex文件里记录类型的首字符)，这里是用来判断是否为有效数据记录
+   
+    //GetAddressAndSizeBytes();
+    ALLFileSegment= flashFile.SegmentNumber;//这里记录APP文件的segmentNumber,为啥是APP，因为先下载flashdriver，后下载APP，所以值最终会是APP的segmentNumber
+    return True;
+}
+
+
+int CheckS19FileSuffix (char filePath[])
+{
+    int result;
+    int fileLen;
+    int filelentmp;
+    result = 0;
+    fileLen=0;
+    fileLen = strlen(filePath);
+    filelentmp=fileLen;
+    if (fileLen < 5) return 0;
+
+    fileLen--;
+
+    if (filePath[fileLen] == '9')
+    {
+        fileLen--;
+
+        if (filePath[fileLen] == '1')
+        {
+            fileLen--;
+
+            if ((filePath[fileLen] == 'S') || (filePath[fileLen] == 's'))
+            {
+                fileLen--;
+
+                if (filePath[fileLen] == '.')
+                {
+                    result = 1;
+                    write("Update FileType: %c%c%c",filePath[filelentmp-3],filePath[filelentmp-2],filePath[filelentmp-1]);
+                }
+            }
+        }
+    }
+    
+    return result;
+}
+
+//记录类型如下所示以S开头：2个字符(即1个字节)，用来描述记录的类型。记录供定义了8种类型：
+//S0：S19格式文件的第一个记录，表示文件名(含路径)，存储地址部分没有使用，以0000置位。此记录表示记录的开始，无需下载到MCU。
+//S1: 地址为2字节(4个字符)的记录。
+//S2: 地址为3字节的记录。
+//S3: 地址为4字节的记录。
+//S5: 标记本文件的S1、S2、S3记录的个数(此记录不是一个S文件所必须的)。
+//S7: 地址为4字节，表示程序的开始执行地址，代码/数据部分没有被使用，此行表示程序的结束，无需下载到MCU。
+//S8: 地址为3字节，表示程序的开始执行地址，代码/数据部分没有被使用，此行表示程序的结束，无需下载到MCU。
+//S9: 地址为2字节，表示程序的开始执行地址，代码/数据部分没有被使用，此行表示程序的结束，无需下载到MCU。
+
+//记录长度: 2个字符(即1个字节)，显示在记录中剩余的字节数。即记录长度 = 存储地址字节数 + 代码/数据字节数 + 校验和字节数
+//存储地址: 2或3或4个字节(由记录类型决定)，用来表示代码/数据应该装载的起始地址。
+//代码/数据: 0-64字符(即0-32字节)，表示需要下载到MCU中的数据。
+//校验和: 2个字符(即1字节),校验数据，计算方法:
+//校验和 = 0Xff – (记录长度 + 存储地址 + 代码/数据)
+//(注意，为校验和不是字符的校验和，而是实际二进制数的校验和)
+
+//实例:
+//S01F0000443A5C50726F6A6563745F335C62696E5C50726F6A6563742E61627371
+//S123C000CF2100C6055B134A800BFE4A8000FE0000C015C031000000000000000000000092
+//S218FE8020F2FEC013EC31270BED31180A30700434F920F10A0B
+//S309EEFCFCFC0000000014
+//S9030000FC
+//说明;
+//第一行：S0表示S19文件格式开始；1F为剩余字节数；0000无用；443A5C50726F6A6563745F335C62696E5C50726F6A6563742E616273为数据块；71为校验和。
+//第二行：S1表示本条记录存储地址长度为2字节；23(注意为16进制)剩余字节数，C000，表示起始地址，92表示校验和。即，本行表示将CF2100C6055B134A800BFE4A8000FE0000C015C0310000000000000000000000依次下载到从地址C000开始的一段连续地址中。
+//第三行：S2表示本条记录存储地址长度为3字节，18(16进制数)表示剩余字节数，FE8020表示起始地址，0B为校验和。
+//第四行：S3表示本条记录存储地址长度为4字节，18(16进制数)表示剩余字节数，EEFCFCFC表示起始地址，14为校验和。
+//校验和的计算：以S2记录为例，校验和 = 0xFF – (0xFE + 0×80 + 0×20 + 0Xf2 + … + 0x0A);
+enum Status GetS19filedata(char path[], struct FlashFileInfo flashFile)
+{
+  int i,j;
+  dword tmpaddress;
+  char strLine[256];
+  char strData[256];
+  byte dataBuffer[256]; //临时存放转换得到的字节数据
+  dword baseAddress;  //为Hex文件准备的基地址
+  int LastDataLength;//储存上一段数据长度，用来检查本地地址和上次地址是否连续
+  //byte AddressInfo[0x10000][4];//储存每段信息的起始地址
+ // byte SizeInfo[0x10000][4];//储存每段信息的长度
+  dword AddressMemery;//储存上一个地址长度的临时变量
+  byte isFirstAddress;
+  dword handle;
+  handle = openFileRead(path,0); // 0-文本模式， 1-二进制模式
+  if(handle==0)
+  {
+    write("错误，文件打开失败！\n文件路径：%s\n 文件句柄：%d",path, handle);  
+    return False;
+  }
+  flashFile.DataLen = 0;
+  flashFile.SegmentNumber=0;
+  baseAddress=0;
+  AddressMemery=0;
+ isFirstAddress=0;
+  do
+  { 
+    if(!fileGetString(strLine,256,handle))//读完一行或者是限定的该行字数后换行，并返回1，遇到异常返回0
+    {
+      break;
+    }
+   
+    memcpy_off(strData, 0, strLine, 2, elcount(strLine)-2);//strLine第0位是字符：所以偏移一位
+   // write("StrLine:%s",strLine);
+    //write("strData:%s",strData);
+    Char2Byte(strData, dataBuffer);
+
+    switch(strLine[1])//这里根据S后面的数值去对应解析
+    {  
+      case '0'://S0:S19格式文件的第一个记录，表示文件名(含路径)，存储地址部分没有使用，以0000置位。此记录表示记录的开始，无需下载到MCU。
+       // write("strLine[1] =%c",strLine[1]);
+        if(S19HeadType==0)
+      {
+        testStep("FlashDriver文件头信息","ECU Diagnostic Reception ID: 0x%03x",(dataBuffer[3]<<8)|dataBuffer[4]);
+        testStep("FlashDriver文件头信息","System supplier identifier:%C%C%C%",dataBuffer[5],dataBuffer[6],dataBuffer[7]);
+        testStep("FlashDriver文件头信息","CowinSparePartNumber:%C%C%C%C%C%C%C%C%C%C%C%C%C%C%C%C%C%C%C%C",dataBuffer[7],dataBuffer[8],dataBuffer[9],dataBuffer[10],dataBuffer[11],dataBuffer[12],dataBuffer[13],dataBuffer[14],dataBuffer[15],dataBuffer[16],dataBuffer[17],dataBuffer[18],dataBuffer[19],dataBuffer[20],dataBuffer[21],dataBuffer[22],dataBuffer[23],dataBuffer[24],dataBuffer[25],dataBuffer[26]);
+        if(dataBuffer[27]==0x00)
+             testStep("FlashDriver文件头信息","Module ID:Flash Driver File");
+      }
+      else 
+      {
+        testStep("App文件头信息","ECU Diagnostic Reception ID: 0x%03x",(dataBuffer[3]<<8)|dataBuffer[4]);
+        testStep("App文件头信息","System supplier identifier:%C%C%C%",dataBuffer[5],dataBuffer[6],dataBuffer[7]);
+        testStep("App文件头信息","CowinSparePartNumber:%C%C%C%C%C%C%C%C%C%C%C%C%C%C%C%C%C%C%C%C",dataBuffer[7],dataBuffer[8],dataBuffer[9],dataBuffer[10],dataBuffer[11],dataBuffer[12],dataBuffer[13],dataBuffer[14],dataBuffer[15],dataBuffer[16],dataBuffer[17],dataBuffer[18],dataBuffer[19],dataBuffer[20],dataBuffer[21],dataBuffer[22],dataBuffer[23],dataBuffer[24],dataBuffer[25],dataBuffer[26]);
+        testStep("APP文件头信息","VehicleManufacturerECUSoftwareVersionNumber:%C%C%C%C%C%C%C%C%",dataBuffer[28],dataBuffer[29],dataBuffer[30],dataBuffer[31],dataBuffer[32],dataBuffer[33],dataBuffer[34],dataBuffer[35]);  
+        if(dataBuffer[27]==0x01)
+            testStep("APP文件头信息","Module ID:Application File");
+       }
+        break;
+      case '1'://S1:地址为2字节(4个字符)的记录
+        
+        if(isFirstAddress == 0)
+        {
+          isFirstAddress = 1;
+          flashFile.SegmentNumber = 1;  
+          AddressMemery = dataBuffer[1]*0x100 + dataBuffer[2];//80 04 00 00
+          flashFile.Segment[flashFile.SegmentNumber-1].Address = dataBuffer[1]*0x100 + dataBuffer[2];
+          LastDataLength =  dataBuffer[0]-3; // 0x20
+          flashFile.Segment[flashFile.SegmentNumber-1].DataLength = LastDataLength;// 0x20
+          flashFile.CurrentAddress=flashFile.Segment[flashFile.SegmentNumber-1].Address; 
+        }
+        else
+        {
+          tmpaddress = dataBuffer[1]*0x100 + dataBuffer[2];
+          if(tmpaddress-AddressMemery!=LastDataLength)    
+          {                                           
+            flashFile.SegmentNumber+=1;
+            LastDataLength=dataBuffer[0]-3;
+            flashFile.Segment[flashFile.SegmentNumber-1].Address = dataBuffer[1]*0x100 + dataBuffer[2];
+            flashFile.Segment[flashFile.SegmentNumber-1].DataLength = LastDataLength;//从头开始计算长度
+            flashFile.CurrentAddress=flashFile.Segment[flashFile.SegmentNumber-1].Address; 
+          }
+          else
+          {
+            LastDataLength = dataBuffer[0]-3;
+            flashFile.Segment[flashFile.SegmentNumber-1].DataLength += LastDataLength;  //如果地址连续，当前Segment长度需要加上当前行的数据长度
+          }
+          LastDataLength = dataBuffer[0]-3;
+          AddressMemery  =  dataBuffer[1]*0x100 + dataBuffer[2];
+          
+        }
+        for(i=0;i< LastDataLength;i++)
+        {    //flashFile.Flash_Data可用于整体文件校验
+            flashFile.Flash_Data[flashFile.DataLen+i]=dataBuffer[i+3] + ErrorData;//相比HeX长度之后是地址，然后地址之后是数据，而hex地址之后是记录类型，但S19文件的地址长度是有差异的，所以数据的起始位置是有差异的
+            flashFile.Segment[flashFile.SegmentNumber-1].Data[flashFile.Segment[flashFile.SegmentNumber-1].DataLength - LastDataLength + i]=dataBuffer[i+3]+ ErrorData;//flashFile.Segment[flashFile.SegmentNumber-1].data可用于将每页的数据取到缓存区，然后可以在后面计算每页的校验值来比较ECU返回校验值
+            if(flashFile.CurrentAddress>=0xA05FFF60&&flashFile.CurrentAddress<=0xA05FFF80)
+            {    //  write("flashFile.CurrentAddress=0x%X  dataBuffer[%d]=0x%X", flashFile.CurrentAddress,i+4,dataBuffer[i+4]);
+             if(flashFile.CurrentAddress==0xA05FFF60)
+            {
+              for(j=0;j< elcount(ResolveSparePartNumberData);j++)
+            {
+           ResolveSparePartNumberData[j]= dataBuffer[j+4];
+            //write("dataBuffer[%d]=0x%X",j+4,dataBuffer[j+4]);
+           // write("ResolveSparePartNumberData[%d]=0x%X",j,ResolveSparePartNumberData[j]);
+            }
+           }
+          }
+          flashFile.CurrentAddress++;
+          }
+
+        flashFile.DataLen+=i;
+       // write("flashFile.Segment[%d].DataLength =%d, LastDataLength =%d,i= %d",flashFile.SegmentNumber-1,flashFile.Segment[flashFile.SegmentNumber-1].DataLength,LastDataLength,i);
+        break;
+      case '2'://S2:地址为3字节的记录
+        
+         if(isFirstAddress == 0)
+         {
+          isFirstAddress = 1;
+          flashFile.SegmentNumber = 1;  
+          AddressMemery = dataBuffer[1]*0x10000 + dataBuffer[2]*0x100 + dataBuffer[3];//80 04 00 00
+          flashFile.Segment[flashFile.SegmentNumber-1].Address = dataBuffer[1]*0x10000 + dataBuffer[2]*0x100 + dataBuffer[3];
+          LastDataLength = dataBuffer[0]-4; // 0x20
+          flashFile.Segment[flashFile.SegmentNumber-1].DataLength = LastDataLength;// 0x20
+          flashFile.CurrentAddress=flashFile.Segment[flashFile.SegmentNumber-1].Address; 
+         }
+        else
+        {
+          tmpaddress = dataBuffer[1]*0x10000 + dataBuffer[2]*0x100 + dataBuffer[3];
+          if(tmpaddress-AddressMemery!=LastDataLength)    //通过比较下一行跟上一行是不是一样来判断是否连续，如果地址不连续，segment+1
+          {
+            flashFile.SegmentNumber+=1;
+            LastDataLength=dataBuffer[0]-4;
+            flashFile.Segment[flashFile.SegmentNumber-1].Address = dataBuffer[1]*0x10000 + dataBuffer[2]*0x100 + dataBuffer[3];
+            flashFile.Segment[flashFile.SegmentNumber-1].DataLength = LastDataLength;//从头开始计算长度
+            flashFile.CurrentAddress=flashFile.Segment[flashFile.SegmentNumber-1].Address; 
+            }
+          else
+          {
+             LastDataLength = dataBuffer[0]-4;
+            flashFile.Segment[flashFile.SegmentNumber-1].DataLength += LastDataLength;  //如果地址连续，当前Segment长度需要加上当前行的数据长度
+          }
+          LastDataLength =dataBuffer[0]-4;
+          AddressMemery  = dataBuffer[1]*0x10000 + dataBuffer[2]*0x100 + dataBuffer[3];
+          
+        }
+        for(i=0;i< LastDataLength;i++)
+        {
+            flashFile.Flash_Data[flashFile.DataLen+i]=dataBuffer[i+4] + ErrorData;//相比HeX长度之后是地址，然后地址之后是数据，而hex地址之后是记录类型，但S19文件的地址长度是有差异的，所以数据的起始位置是有差异的
+            flashFile.Segment[flashFile.SegmentNumber-1].Data[flashFile.Segment[flashFile.SegmentNumber-1].DataLength - LastDataLength + i]=dataBuffer[i+4]+ ErrorData;//将每页的数据取到缓存区，然后可以在后面计算每页的校验值来比较ECU返回校验值
+            if(flashFile.CurrentAddress>=0xA05FFF60&&flashFile.CurrentAddress<=0xA05FFF80)
+            {    //  write("flashFile.CurrentAddress=0x%X  dataBuffer[%d]=0x%X", flashFile.CurrentAddress,i+4,dataBuffer[i+4]);
+             if(flashFile.CurrentAddress==0xA05FFF60)
+            {
+              for(j=0;j< elcount(ResolveSparePartNumberData);j++)
+            {
+           ResolveSparePartNumberData[j]= dataBuffer[j+4];
+            //write("dataBuffer[%d]=0x%X",j+4,dataBuffer[j+4]);
+           // write("ResolveSparePartNumberData[%d]=0x%X",j,ResolveSparePartNumberData[j]);
+            }
+           }
+          }
+          flashFile.CurrentAddress++;
+          
+        }
+        flashFile.DataLen+=i;
+        //write("flashFile.Segment[%d].DataLength =%d, LastDataLength =%d,i= %d",flashFile.SegmentNumber-1,flashFile.Segment[flashFile.SegmentNumber-1].DataLength,LastDataLength,i);
+        
+        break;
+      case '3'://S3:地址为4字节的记录
+        
+          if(isFirstAddress == 0)
+         {
+          isFirstAddress = 1;
+          flashFile.SegmentNumber = 1;  
+          AddressMemery = dataBuffer[1]*0x1000000 + dataBuffer[2]*0x10000 + dataBuffer[3]*0x100 +  dataBuffer[4];//80 04 00 00
+          flashFile.Segment[flashFile.SegmentNumber-1].Address = dataBuffer[1]*0x1000000 + dataBuffer[2]*0x10000 + dataBuffer[3]*0x100 +  dataBuffer[4];
+          LastDataLength = dataBuffer[0]-5; // 0x20
+          flashFile.Segment[flashFile.SegmentNumber-1].DataLength = LastDataLength;// 0x20
+         }
+        else
+        {
+          tmpaddress =dataBuffer[1]*0x1000000 + dataBuffer[2]*0x10000 + dataBuffer[3]*0x100 +  dataBuffer[4];
+          //write("tmpaddress =%08x,AddressMemery=%08x",tmpaddress,AddressMemery);
+          if(tmpaddress-AddressMemery!=LastDataLength)    //通过比较下一行跟上一行是不是一样来判断是否连续，如果地址不连续，segment+1
+          { 
+            flashFile.SegmentNumber+=1;
+            LastDataLength = dataBuffer[0]-5;
+            flashFile.Segment[flashFile.SegmentNumber-1].Address = dataBuffer[1]*0x1000000 + dataBuffer[2]*0x10000 + dataBuffer[3]*0x100 +  dataBuffer[4];
+            flashFile.Segment[flashFile.SegmentNumber-1].DataLength = LastDataLength;//从头开始计算长度
+             
+          }
+          else
+          {
+            LastDataLength = dataBuffer[0]-5;
+            flashFile.Segment[flashFile.SegmentNumber-1].DataLength += LastDataLength;  //如果地址连续，当前Segment长度需要加上当前行的数据长度
+          }
+         
+          AddressMemery  = dataBuffer[1]*0x1000000 + dataBuffer[2]*0x10000 + dataBuffer[3]*0x100 +  dataBuffer[4];
+          
+        }
+        for(i=0;i< LastDataLength;i++)
+        {
+            flashFile.Flash_Data[flashFile.DataLen+i]=dataBuffer[i+5] + ErrorData;//相比HeX长度之后是地址，然后地址之后是数据，而hex地址之后是记录类型，但S19文件的地址长度是有差异的，所以数据的起始位置是有差异的
+            flashFile.Segment[flashFile.SegmentNumber-1].Data[flashFile.Segment[flashFile.SegmentNumber-1].DataLength - LastDataLength + i]=dataBuffer[i+5] + ErrorData;//将每页的数据取到缓存区，然后可以在后面计算每页的校验值来比较ECU返回校验值
+            if(flashFile.CurrentAddress>=0xA05FFF60&&flashFile.CurrentAddress<=0xA05FFF80)
+            {    //  write("flashFile.CurrentAddress=0x%X  dataBuffer[%d]=0x%X", flashFile.CurrentAddress,i+4,dataBuffer[i+4]);
+             if(flashFile.CurrentAddress==0xA05FFF60)
+            {
+              for(j=0;j< elcount(ResolveSparePartNumberData);j++)
+            {
+            ResolveSparePartNumberData[j]= dataBuffer[j+4];
+            //write("dataBuffer[%d]=0x%X",j+4,dataBuffer[j+4]);
+           // write("ResolveSparePartNumberData[%d]=0x%X",j,ResolveSparePartNumberData[j]);
+            }
+           }
+          }
+          flashFile.CurrentAddress++;
+        }
+        //write("flashFile.Segment[%d].DataLength =%d, LastDataLength =%d,i= %d",flashFile.SegmentNumber-1,flashFile.Segment[flashFile.SegmentNumber-1].DataLength,LastDataLength,i);
+        flashFile.DataLen+=i;
+      
+        break;
+      default:
+        write("Occur Other Recording Type = S%C",strLine[1]);
+        break;
+     }
+  }while(strLine[1]<0x37);//解析到S7以后一般是文件结束的标志,最多到S9
+  
+  ALLFileSegment= flashFile.SegmentNumber;//这里记录APP文件的segmentNumber,为啥是APP，因为先下载flashdriver，后下载APP，所以值最终会是APP的segmentNumber
+  
+   return True;
+
+}
+
+
+///-----------------------------------------------------------------------------
+//  string转byte[]
+//-----------------------------------------------------------------------------
+
+//方法1：
+int Char2Byte(char str_temp[],byte byte_temp[])
+{
+  int i;
+  int n = 0;
+  n=0;
+   for(i = 0; str_temp[i] != 0; i += 2)
+  {
+    if(((str_temp[i]=='0') && ((str_temp[i+1]=='x')|| (str_temp[i+1]=='X')))||((str_temp[i]==',') && (str_temp[i+1]==' ')))//增加跳过,和空格' '
+    {
+      continue;
+    }
+    
+    if(str_temp[i] >= 'A' && str_temp[i] <= 'F')
+    {
+      byte_temp[n] = str_temp[i] - 'A' + 10;//字母ASCII码转换
+    }
+    else if(str_temp[i] >= 'a' && str_temp[i] <= 'f')
+    {
+      byte_temp[n] = str_temp[i] - 'a' + 10;//字母ASCII码转换
+    }    
+    else 
+    {
+      byte_temp[n] = str_temp[i] - '0';//数字ASCII码转换
+    }
+
+    if(str_temp[i + 1] >= 'A' && str_temp[i + 1] <= 'F')
+    {
+      byte_temp[n] = (byte_temp[n] << 4) | (str_temp[i + 1] - 'A' + 10);//字母ASCII码转换
+    }
+    else if(str_temp[i + 1] >= 'a' && str_temp[i + 1] <= 'f')
+    {
+      byte_temp[n] = (byte_temp[n] << 4) | (str_temp[i + 1] - 'a' + 10);//字母ASCII码转换
+    }//更改A为a
+    else 
+    {
+      byte_temp[n] = (byte_temp[n] << 4) | (str_temp[i + 1] -'0');//数字ASCII码转换
+    }
+
+    ++n;
+  }
+  return n;
+}
+
+/// <Converter>
+//方法2：
+
+Char Hex_ASCII_2_HEX(char source[], byte target[])//按ASCII码来看一个字节一个字符，这个是用来计算真实的长度
+{
+  int num;
+  int  addr = 0;
+  dword len;
+  dword Datelen;
+ len = (strlen(source)-3)/2;//这里长度包括长度，地址，类型和数据
+ Datelen = (strlen(source)-11)/2;//这里就只计算数据字节的长度了
+  for(num = 0; num < len; num++)
+  { 
+      target[num] = Char2Hex(source[1+ 2*num]);
+      target[num] <<= 4;
+      target[num] |= Char2Hex(source[2 + 2*num]);//这里的target[]数组就是你定义的参数数组，这里用于全局数组relsult传参
+  }  
+
+  return  Datelen;//改成返回每行hex中解析出的数据长度
+}
+/// <Converter>
+byte Char2Hex (byte ucChar)
+{
+    byte ucHex = 0;
+ 
+    if (ucChar >= 0x30 && ucChar < 0x3A)
+    {
+        ucHex = ucChar - 0x30;
+    }
+    else if (ucChar >= 0x41 && ucChar <0x47)
+    {
+        ucHex = ucChar - 0x37;
+    }
+    else if (ucChar >= 0x61 && ucChar <0x67)
+    {
+        ucHex = ucChar - 0x57;
+    }
+
+    return ucHex;
+}
+Void BytesToHexStringPrintStyle(byte data[], dword dataLen, char strHex[])
+{
+  int i;
+  char strTemp[0x1000];
+
+  strncpy(strHex,"",elcount(strHex));
+  
+  if(dataLen <= 0)
+  {
+    snprintf(strHex, elCount(strHex), "格式错误，请检查语法！ ");
+  }
+  else
+  {
+    for(i=0;i<dataLen;i++)
+    {
+      if(i%32==0 && i!=0)//让每32个字节为一行去打印
+      {
+       strncat(strHex,"\n", elCount(strHex));
+      }
+      snprintf(strTemp, elCount(strTemp), "0x%02X ", data[i]);
+      strncat(strHex, strTemp, elCount(strHex));
+    }
+   write("%s",strHex);
+  }
+
+}

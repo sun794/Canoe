@@ -1,0 +1,210 @@
+/*@!Encoding:936*/
+
+// WMG 2023.1.9
+// 功能：在软件启动和关闭时，从Canoe的路径下的TestConfiguration.ini中加载和保存相关的配置参数
+
+variables
+{
+  char IniFileName[256] =  "TestConfiguration.ini";
+  char IniFilePath[256];
+  char strTemp[1000];
+  int intTemp;
+  long timetemp;
+
+}
+
+
+on errorFrame
+{
+  resetcan();
+}
+on preStart
+{
+  //测试启动时，从ini文件中读取配置参数到面板
+  ShowIniFilePath();
+  
+  
+
+  
+  getProfileString("Config", "DriverSignature", "./", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::DrvSignature, strTemp);
+  
+  getProfileString("Config", "AppSignature1", "./", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::AppSignature1, strTemp);
+  
+  getProfileString("Config", "AppSignature2", "./", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::AppSignature2, strTemp);
+  
+  getProfileString("Config", "AppSignature3", "Reserved", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::AppSignature3, strTemp);
+  
+  getProfileString("Config", "ConfigSignature1", "./", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::ConfigSignature1, strTemp);
+  
+  getProfileString("Config", "ConfigSignature2", "./", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::ConfigSignature2, strTemp);
+  
+  getProfileString("Config", "ConfigSignature3", "Reserved", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::ConfigSignature3, strTemp);
+  
+  getProfileString("Config", "FlashFileDriver", "./", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::FlashFileDriver, strTemp);
+  
+  getProfileString("Config", "FlashFileVersion1", "./", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::FlashFileVersion1, strTemp);
+  
+  getProfileString("Config", "FlashFileVersion2", "./", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::FlashFileVersion2, strTemp);
+  
+  getProfileString("Config", "FlashFileVersion3", "Reserved", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::FlashFileVersion3, strTemp);
+  
+  getProfileString("Config", "ConfigFileVersion1", "./", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::ConfigFileVersion1, strTemp);
+  
+  getProfileString("Config", "ConfigFileVersion2", "./", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::ConfigFileVersion2, strTemp);
+  
+  getProfileString("Config", "ConfigFileVersion3", "Reserved", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::ConfigFileVersion3, strTemp);
+  
+  intTemp = getProfileInt("Config", "FlashTimes", 1, IniFileName);
+  sysSetVariableInt(sysvar::FlashPannel::FlashTimes, intTemp);
+  
+  timetemp = getProfileInt("Config", "LastFlashTime( S )", 0, IniFileName);
+  sysSetVariableInt(sysvar::FlashPannel::FblUseTime, timetemp);
+  
+  intTemp = getProfileInt("Config", "FlashType", 0, IniFileName);
+  sysSetVariableInt(sysvar::FlashPannel::FlashVersion, intTemp);
+  
+  intTemp = getProfileInt("Config", "PowerPortNumber", 0, IniFileName);
+  sysSetVariableInt(sysvar::FlashPannel::PortNumber1, intTemp);
+  
+  intTemp = getProfileInt("Config", "RelayPortNumber", 0, IniFileName);
+  sysSetVariableInt(sysvar::FlashPannel::PortNumber2, intTemp);
+  
+  intTemp = getProfileInt("Config", "UsePowerControl", 0, IniFileName);
+  sysSetVariableInt(sysvar::FlashPannel::UsePowerControl, intTemp);
+  
+  intTemp = getProfileInt("Config", "UseRelayControl", 0, IniFileName);
+  sysSetVariableInt(sysvar::FlashPannel::UseRelayControl, intTemp);
+  
+  intTemp = getProfileInt("Config", "UseRelayType", 0, IniFileName);
+  sysSetVariableInt(sysvar::FlashPannel::UseRelayType, intTemp);
+  
+  getProfileString("Config", "ReportPath", "./", strTemp, elcount(strTemp), IniFileName);
+  sysSetVariableString(sysvar::FlashPannel::ReportPath, strTemp);
+  
+  intTemp = getProfileInt("Config", "ECUDiagResponseID", 0, IniFileName);
+  sysSetVariableInt(sysvar::FlashPannel::ECU_DiagResponseID, intTemp);
+  
+  intTemp = getProfileInt("Config", "CRTYPE", 0, IniFileName);
+  sysSetVariableInt(sysvar::FlashPannel::CR_Type, intTemp);
+  
+  
+  intTemp = getProfileInt("Config", "T1Radar_key", 1, IniFileName);
+  sysSetVariableInt(sysvar::FlashPannel::T1Radar_key, intTemp);
+}
+
+on preStop
+{  
+  sysGetVariableString(sysvar::FlashPannel::DrvSignature, strTemp, elcount(strTemp));
+  writeProfileString("Config", "DriverSignature", strTemp, IniFileName);
+  
+  sysGetVariableString(sysvar::FlashPannel::AppSignature1, strTemp, elcount(strTemp));
+  writeProfileString("Config", "AppSignature1", strTemp, IniFileName);
+  
+  sysGetVariableString(sysvar::FlashPannel::AppSignature2, strTemp, elcount(strTemp));
+  writeProfileString("Config", "AppSignature2", strTemp, IniFileName);
+  
+//  sysGetVariableString(sysvar::FlashPannel::AppSignature3, strTemp, elcount(strTemp));
+//  writeProfileString("Config", "AppSignature3", strTemp, IniFileName);
+  
+  sysGetVariableString(sysvar::FlashPannel::ConfigSignature1, strTemp, elcount(strTemp));
+  writeProfileString("Config", "ConfigSignature1", strTemp, IniFileName);
+  
+  sysGetVariableString(sysvar::FlashPannel::ConfigSignature2, strTemp, elcount(strTemp));
+  writeProfileString("Config", "ConfigSignature2", strTemp, IniFileName);
+  
+//  sysGetVariableString(sysvar::FlashPannel::ConfigSignature3, strTemp, elcount(strTemp));
+//  writeProfileString("Config", "ConfigSignature3", strTemp, IniFileName);
+  
+  sysGetVariableString(sysvar::FlashPannel::FlashFileDriver, strTemp, elcount(strTemp));
+  writeProfileString("Config", "FlashFileDriver", strTemp, IniFileName);
+  
+  sysGetVariableString(sysvar::FlashPannel::FlashFileVersion1, strTemp, elcount(strTemp));
+  writeProfileString("Config", "FlashFileVersion1", strTemp, IniFileName);
+  
+  sysGetVariableString(sysvar::FlashPannel::FlashFileVersion2, strTemp, elcount(strTemp));
+  writeProfileString("Config", "FlashFileVersion2", strTemp, IniFileName);
+  
+//  sysGetVariableString(sysvar::FlashPannel::FlashFileVersion3, strTemp, elcount(strTemp));
+//  writeProfileString("Config", "FlashFileVersion3", strTemp, IniFileName);
+  
+   sysGetVariableString(sysvar::FlashPannel::ConfigFileVersion1, strTemp, elcount(strTemp));
+  writeProfileString("Config", "ConfigFileVersion1", strTemp, IniFileName);
+  
+  sysGetVariableString(sysvar::FlashPannel::ConfigFileVersion2, strTemp, elcount(strTemp));
+  writeProfileString("Config", "ConfigFileVersion2", strTemp, IniFileName);
+  
+//  sysGetVariableString(sysvar::FlashPannel::ConfigFileVersion3, strTemp, elcount(strTemp));
+//  writeProfileString("Config", "ConfigFileVersion3", strTemp, IniFileName);
+  
+  intTemp = sysGetVariableInt(sysvar::FlashPannel::FlashTimes);
+  writeProfileInt("Config", "FlashTimes", intTemp, IniFileName);
+  
+  timetemp = sysGetVariableInt(sysvar::FlashPannel::FblUseTime);
+  writeProfileInt("Config", "LastFlashTime( s )", timetemp, IniFileName);
+  
+  intTemp = sysGetVariableInt(sysvar::FlashPannel::FlashVersion);
+  writeProfileInt("Config", "FlashType", intTemp, IniFileName);
+  
+  intTemp = sysGetVariableInt(sysvar::FlashPannel::PortNumber1);
+  writeProfileInt("Config", "PowerPortNumber", intTemp, IniFileName);
+  
+  intTemp = sysGetVariableInt(sysvar::FlashPannel::PortNumber2);
+  writeProfileInt("Config", "RelayPortNumber", intTemp, IniFileName);
+  
+  intTemp = sysGetVariableInt(sysvar::FlashPannel::UsePowerControl);
+  writeProfileInt("Config", "UsePowerControl", intTemp, IniFileName);
+  
+  intTemp = sysGetVariableInt(sysvar::FlashPannel::UseRelayControl);
+  writeProfileInt("Config", "UseRelayControl", intTemp, IniFileName);
+  
+  
+  intTemp = sysGetVariableInt(sysvar::FlashPannel::UseRelayType);
+  writeProfileInt("Config", "UseRelayType", intTemp, IniFileName);
+  
+  sysGetVariableString(sysvar::FlashPannel::ReportPath, strTemp, elcount(strTemp));
+  writeProfileString("Config", "ReportPath", strTemp, IniFileName);
+  
+  intTemp = sysGetVariableInt(sysvar::FlashPannel::ECU_DiagResponseID);
+  writeProfileInt("Config", "ECUDiagResponseID", intTemp, IniFileName);
+  
+  intTemp = sysGetVariableInt(sysvar::FlashPannel::CR_Type);
+  writeProfileInt("Config", "CRTYPE", intTemp, IniFileName);
+  
+  
+    
+  intTemp = sysGetVariableInt(sysvar::FlashPannel::T1Radar_key);
+  writeProfileInt("Config", "T1Radar_key", intTemp, IniFileName);
+  
+
+  
+
+  
+}
+
+void ShowIniFilePath()
+{
+  int ret;
+  ret=getAbsFilePath(IniFileName, IniFilePath, elcount(IniFilePath));
+  if(ret!=-1)
+      write("配置文件路径：%s", IniFilePath);
+}
+
+void WriteConfig(char Target[],Char HexStr[])//这里生成配置文件的相对路径是以CANOE工程的位置为参照物，而不是以脚本文件的位置
+{
+  writeProfileString("Config",Target, HexStr, IniFileName);
+ 
+}

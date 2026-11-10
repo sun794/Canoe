@@ -1,0 +1,828 @@
+/*@!Encoding:936*/
+/***************************************************
+基于CANTP dll实现诊断多帧发送和接收
+Author：汤思玮
+Date：2020/08/11
+***************************************************/
+includes
+{
+// #pragma library ("..\capldll\osek_tp.dll")//动态库加载方式有问题，只能改成在testmodule上面去添加，在建立句柄的时候才不会访问错误码-1
+//实测在CANoe的options选项里面去包含也不行，还是返回错误-1
+}
+
+variables
+{
+  int Reprint=0;//0表示不限制同一个请求或者同一个响应一直打印，1表示同一个请求或者响应只打印一次
+  int UseAPI=1;//0的话表示用的outputresult去打印，1表示选择单步去执行formatSendLine,formatResultLine等等来分别打印
+  enum DiagResult{DiagOK, DiagTxError, diagRxNegResp, DiagRxPending, DiagRxTimeout, DiagRxError};
+  enum AddressMode {PhyRequest, FunRequest};                              // 寻址方式
+  enum SessionType {DefaultSession=1, ProgramSession, ExtendSession};     // 会话类型
+  enum SuppressBitFlag {SuppressOff, SuppressOn};                         // 抑制位
+  enum DTCControlType {DtcOn = 1, DtcOff};                                // DTC关闭和打开
+  enum RoutineControlType {StartRoutine=1, StopRoutine=2, RequestRoutineResults=3};
+  byte    gExpectedResponse;
+  const dword cCANTPSendCompleteTimeout = 500;//发送请求是否成功的超时时间
+  const int MaximumWaitTime = 30000;  //诊断通信最大等待时间，包含Pending时间，设置为30s
+  struct CommunicationParameterStruct
+  {
+    dword addrMode; //CAN诊断地址模式，初始值0
+    word phyTxID;
+    word funTxID;
+    word rxID;
+    
+    dword p2ClientTimeout;           // P2Client 超时时间 ms
+    dword p2EnhanceClientTimeout;    // P2*Client超时时间 ms
+    dword diagRequestTimeout;        // 发送超时时间 ms
+    
+    dword flowControlFlag;          //流控帧使能标志，0：禁止，1：使能
+    dword STmin;                    //发送方STmin设置
+    dword blockSize;     //发送方BlockSize设置
+    
+    dword CANFDMode;                // 0 - can, 1 - canfd
+    dword maxCANFDFrameLength;      // 0 - CAN2.0 ;   8, 12, 16, 20, 24, 32, 48, 64 - CAN FD 
+    dword bitRateSwitch;      // 0: do not set the flag;1:set the flag on a CAN FD frame;other: reserve
+    
+    dword acceptType;               // Mixing of CAN2.0 and FD frame, 0:ignore, 1:accept, 2:adapt
+    long paddingValue;    //-1:不填充，DLC长度可变;  0-255：要填充的字节，DLC=8固定
+    
+      //TP层时间参数
+    dword Ar_ms;
+    dword As_ms;
+    dword Br_ms; 
+    dword Bs_ms;
+    dword Cr_ms; 
+    dword Cs_ms;
+    
+    dword maxRxLength;//CanTP最大接收长度
+  };
+  
+  struct CommunicationParameterStruct gCommunicationParameter;
+  //long gDiagHandle;           //canTpInitial函数初始化句柄
+  
+  const dword gCanTpTxFCDelay = 15;     //发送方接收到ECU的FirstFrame之后，延时TxFCDelay ms发送FC
+  const dword gCanTpTxSTminMode = 2;    //0：忽略ECU的FC，按固定值进行发送多帧；1：按第一次接收到ECU的FC固定发送多帧，忽略之后的FC; 2:TestTool根据每次接收到ECU的FC，发送多帧
+  const dword gCanTpTxBlockSizeMode = 2;//0：忽略ECU的FC，按固定值进行发送多帧；1：按第一次接收到ECU的FC固定发送多帧，忽略之后的FC; 2:TestTool根据每次接收到ECU的FC，发送多帧 //UDS诊断接收状态判断字符串
+  
+  
+   //UDS诊断接收状态判断字符串
+  char cCANTPSendComplete[29] = "CANTP send request completed";
+  char cCANTPReceivedData[24]   = "CANTP received response";
+
+  
+  //诊断发送、接收数据数组、长度、时间
+  const word MaxBufDataSize = 4096;//数据存储数组buffer大小
+  byte DiagTxBuf[MaxBufDataSize];//诊断请求数据
+  byte CompareDiagTxBuf[MaxBufDataSize];//用来把上一个诊断请求缓存下来，用于跟当前的诊断请求比较看是否一样，目的是为了限制同样的请求一直打印
+  byte CompareDiagRxBuf[MaxBufDataSize];//用来把上一个诊断请求缓存下来，用于跟当前的诊断请求比较看是否一样，目的是为了限制同样的请求一直打印
+  dword DiagTxBufLen;//诊断请求数据长度
+  byte gCANTPRxBuffer[MaxBufDataSize];//诊断接收数据
+  dword gCANTPRxDataLength;//诊断接收数据长度
+  float DiagTxTime;       //发送完成的时间
+  float DiagRxTime;       //接收完成的时间
+
+}
+
+/// <OutputResult>
+//特点是不做正负反馈应答的判断，主要是做数据的处理，适用于DTC测试
+long CanTpSendDataComplete(long CANTPhandle,dword txSize)
+{
+  int result;
+  char strtemp[1024];
+  int i;
+  gExpectedResponse = DiagTxBuf[0] + 0x40;
+  CanTpSendData(CANTPhandle,DiagTxBuf,txSize);
+  result = testWaitForTextEvent(cCANTPSendComplete,cCANTPSendCompleteTimeout);
+ 
+  if(result == 0)
+  {
+    return -1;
+  }
+  else if(result <0)
+  {
+    return -2;
+  }
+  else//如果发送成功，那么就打印发送数据
+  {
+   if(Reprint)
+   {
+   if(CompareArrays(CompareDiagTxBuf,DiagTxBuf,DiagTxBufLen))//如果等于1表示不相等
+   {
+    
+    for(i=0;i<DiagTxBufLen;i++)
+    {
+      
+      CompareDiagTxBuf[i]=DiagTxBuf[i];
+    }
+    
+     formatSendLine(strtemp);//如果上一个诊断请求跟当前诊断请求不一样，就在报告进行打印
+    }
+   }
+   else
+    formatSendLine(strtemp);//如果上一个诊断请求跟当前诊断请求不一样，就在报告进行打印
+   }
+    return 0;
+}
+
+
+/// <UseForDiagTest>
+//CanTpSendDataComplete的接收回复函数
+int WaitServerResponse()
+/**************************************************
+  返回值   0--正响应
+          -1--非panding负响应
+          -2--响应DLC为0
+          -3--非预期响应
+          -4--未知错误 见testWaitForTextEvent
+          -5--超时
+**************************************************/
+{
+  long status;
+  int result,i;
+  char strtemp[1024];
+  enum DiagResult TestResult;
+ status=testWaitForTextEvent(cCANTPReceivedData,DiagP2Client);
+ 
+  if(status < 0)
+  {
+    return -4;
+  }
+  else if(status == 0)
+  {
+     DiagRxTime = TimeNowNS()/1000000000.0; //s
+    TestResult=DiagRxTimeout;
+     if(Reprint)//如果为1,同一个回复就只打印一次
+      {
+       if(CompareArrays(CompareDiagRxBuf,gCANTPRxBuffer,gCANTPRxDataLength))//如果等于1表示不相等
+       {
+        
+        for(i=0;i<gCANTPRxDataLength;i++)
+        {
+          
+          CompareDiagRxBuf[i]=gCANTPRxBuffer[i];
+        }
+        
+         formatResultLine(strtemp,TestResult);//如果上一个诊断回跟当前诊断回复不一样，就在报告进行打印
+        }
+      }
+      else
+       {
+       
+        formatResultLine(strtemp,TestResult);
+      }
+    return -5;
+  }
+  else
+  {
+    
+    result=CheckDiagResponse();
+    
+    if(result == 1)
+    {
+      result = WaitPendingResponse();
+    }
+   
+    if(result < 0)
+    { 
+      
+      return result;
+    }
+  }
+  return 0;
+}
+
+
+/// <UseForDTCTest>
+/**************************************************
+返回值   0--正响应  -1--非panding负响应
+        -2--响应DLC为0
+        -3--非预期响应
+**************************************************/
+int CheckDiagResponse()
+{
+  float timetemp;
+  enum DiagResult TestResult;
+  char strtemp[1024];
+  dword i;
+  if(gCANTPRxDataLength <= 0)
+  {
+    return -2;
+  }
+  else
+  {
+    if(gCANTPRxBuffer[0] == DiagTxBuf[0] + 0x40)
+    {
+      TestResult=DiagOK;
+      if(Reprint)//如果为1,同一个回复就只打印一次
+      {
+      if(CompareArrays(CompareDiagRxBuf,gCANTPRxBuffer,gCANTPRxDataLength))//如果等于1表示不相等
+       {
+        
+        for(i=0;i<gCANTPRxDataLength;i++)
+        {
+          
+          CompareDiagRxBuf[i]=gCANTPRxBuffer[i];
+        }
+        
+         formatResultLine(strtemp,TestResult);//如果上一个诊断回跟当前诊断回复不一样，就在报告进行打印
+        }
+     }
+     else 
+     formatResultLine(strtemp,TestResult);
+      
+     return 0;
+    }
+    else if(gCANTPRxBuffer[0] != 0x7F && (gCANTPRxBuffer[0] != (gCANTPRxBuffer[0]+0x40)))
+    {
+      return -3;
+    }
+    else if(gCANTPRxBuffer[0] == 0x7F && gCANTPRxBuffer[1] == DiagTxBuf[0])
+    { 
+      if(gCANTPRxBuffer[2]!=0x78)
+      {
+        TestResult=diagRxNegResp;
+       if(Reprint)//如果为1,同一个回复就只打印一次
+      {
+       if(CompareArrays(CompareDiagRxBuf,gCANTPRxBuffer,gCANTPRxDataLength))//如果等于1表示不相等
+       {
+        
+        for(i=0;i<gCANTPRxDataLength;i++)
+        {
+          
+          CompareDiagRxBuf[i]=gCANTPRxBuffer[i];
+        }
+        
+         formatResultLine(strtemp,TestResult);//如果上一个诊断回跟当前诊断回复不一样，就在报告进行打印
+        }
+      }
+      else
+       {
+       
+        formatResultLine(strtemp,TestResult);
+      }
+        return -1;
+      }
+      else
+      {
+        return 1;
+      }
+    }
+    else
+    {
+      return -3;
+    }
+  }
+}
+
+
+/// <UseForDTCTest>
+int WaitPendingResponse( )
+{
+  long status;
+  int result;
+  
+  do
+  {
+    status = testWaitForTextEvent(cCANTPReceivedData,DiagP2ExClient);
+    if(status<0)
+    {
+      return -1;
+    }
+    else if(status == 0)
+    {
+      return -2;
+    }
+    else
+    {
+      result=CheckDiagResponse();
+    }
+  }while(result == 1);
+  return result;
+}
+
+
+
+
+/*********************************************************************************
+  CANTP初始化
+  int canTpInitial(char ECUName[])
+  形参：   ECUName --诊断ECU(在安全访问时需要调用诊断ECU中的dll)
+          
+  返回值： -1--CanTpCreateConnection Fail 
+           >0--CANTP Handle
+*********************************************************************************/
+int canTpInitial(char ECUName[])
+{ 
+  gCommunicationParameter.addrMode                                       =DiagaddrMode; //CAN诊断地址模式，初始值0
+  gCommunicationParameter.phyTxID                                        =DiagrequestID;
+  gCommunicationParameter.funTxID                                        =0x7DF;
+  gCommunicationParameter.rxID                                           =DiagresponseID;
+  gCommunicationParameter.paddingValue                                   =DiagpaddingValue;    //-1:不填充，DLC长度可变;  0-255：要填充的字节，DLC=8固定 
+  gCommunicationParameter.p2ClientTimeout                                =DiagP2Client;           // P2Client 超时时间 ms
+  gCommunicationParameter.p2EnhanceClientTimeout                         =DiagP2ExClient;    // P2*Client超时时间 ms
+  gCommunicationParameter.diagRequestTimeout                             =cCANTPSendCompleteTimeout;        // 发送超时时间 ms
+  gCommunicationParameter.STmin                                          =DiagSTmin;                    //发送方STmin设置  
+  gCommunicationParameter.flowControlFlag                                =Diag_FlowControlFlag;          //流控帧使能标志，0：禁止，1：使能
+  gCommunicationParameter.blockSize                                      =Diag_BlockSize;    //发送方BlockSize设置
+  
+  gCommunicationParameter.CANFDMode                                      =0;                // 0 - can, 1 - canfd
+  gCommunicationParameter.maxCANFDFrameLength                            =64;      // 0 - CAN2.0 ;   8, 12, 16, 20, 24, 32, 48, 64 - CAN FD 
+  
+  gCommunicationParameter.bitRateSwitch                                  =1;      // 0: do not set the flag;1:set the flag on a CAN FD frame;other: reserve
+  gCommunicationParameter.acceptType                                     =1;               // Mixing of CAN2.0 and FD frame, 0:ignore, 1:accept, 2:adapt
+
+    
+      //TP层时间参数
+  gCommunicationParameter.Ar_ms                                          =Diag_Ar_ms;
+  gCommunicationParameter.As_ms                                          =Diag_As_ms;
+  gCommunicationParameter.Br_ms                                          =Diag_Br_ms; 
+  gCommunicationParameter.Bs_ms                                          =Diag_Bs_ms;
+  gCommunicationParameter.Cr_ms                                          =Diag_Cr_ms; 
+  gCommunicationParameter.Cs_ms                                          =Diag_Cs_ms;
+    
+  gCommunicationParameter.maxRxLength                                    =Diag_MaxRxLength;//CanTP最大接收长度，这里初始化为4095，根据系统变量CANFD会在下面自动初始化为4096
+ 
+  CanTpSetVerbosity(3);//Print information on settings, e.g. during the start of the measurement the configuration of the database connection is reported
+  //建立连接
+  gDiagHandle = CanTpCreateConnection(gCommunicationParameter.addrMode);
+  if(gDiagHandle < 0)
+  {
+    write("TP层初始化失败, gDiagHandle = %d!", gDiagHandle);
+    testStepFail("","TP层初始化失败, gDiagHandle = %d!", gDiagHandle);
+    return 0;
+  }
+   write("TP层初始化成功, CanTpAddrMode = %d", gCommunicationParameter.addrMode);
+   TestSteppass("","TP层初始化成功, CanTpAddrMode = %d", gCommunicationParameter.addrMode);
+  
+  //诊断ID设置
+  CanTpSetTxIdentifier(gDiagHandle,gCommunicationParameter.phyTxID);//设置诊断请求ID
+  CanTpSetRxIdentifier(gDiagHandle,gCommunicationParameter.rxID);   //设置诊断回复ID
+  write("Diag Request Id = 0x%X, Response Id = 0x%X", CanTpGetTxIdentifier(gDiagHandle), CanTpGetRxIdentifier(gDiagHandle));//回读
+  Teststep("","Diag Request Id = 0x%X, Response Id = 0x%X", CanTpGetTxIdentifier(gDiagHandle), CanTpGetRxIdentifier(gDiagHandle));//回读
+  //Flow Control设置 
+  CanTpUseFlowControlFrames(gDiagHandle, gCommunicationParameter.flowControlFlag);//使能FC
+  write("Usage Of Flow Control Frame = %d ",CanTpIsUseFlowControlFrames(gDiagHandle)) ; 
+  TestStep("","Usage Of Flow Control Frame = %d ",CanTpIsUseFlowControlFrames(gDiagHandle)) ; 
+  CanTpSetSTmin(gDiagHandle,gCommunicationParameter.STmin);//STmin设置
+  write("STmin = %d ",CanTpGetSTmin(gDiagHandle)); 
+  TestStep("","STmin = %d ",CanTpGetSTmin(gDiagHandle)); 
+  CanTpSetBlockSize(gDiagHandle,gCommunicationParameter.blockSize);//BlockSize设置
+  write("BlockSize = %d ",CanTpGetBlockSize(gDiagHandle));   
+  TestStep("","BlockSize = %d ",CanTpGetBlockSize(gDiagHandle));
+  CanTpSetFlowControlDelay(gDiagHandle,gCanTpTxFCDelay);           //TestTool接收到ECU的FirstFrame之后，延时TxFCDelay ms发送FC 
+  CanTpUseFlowControlBlockSize(gDiagHandle,gCanTpTxBlockSizeMode); //2:TestTool根据每次接收到ECU的FC，控制多帧发送
+  CanTpUseFlowControlSTmin(gDiagHandle,gCanTpTxSTminMode);         //2:TestTool根据每次接收到ECU的FC，控制多帧发送
+  write("Ar_ms  = %d ",gCommunicationParameter.Ar_ms);   
+  TestStep("","Ar_ms  = %d ",gCommunicationParameter.Ar_ms);
+  write("As_ms  = %d ", gCommunicationParameter.As_ms);   
+  TestStep("","As_ms  = %d ", gCommunicationParameter.As_ms);
+  write("Br_ms  = %d ",gCommunicationParameter.Br_ms );   
+  TestStep("","Br_ms  = %d ",gCommunicationParameter.Br_ms );
+  write("Bs_ms  = %d ",gCommunicationParameter.Bs_ms);   
+  TestStep("","Bs_ms  = %d ",gCommunicationParameter.Bs_ms);
+  write("Cr_ms  = %d ",gCommunicationParameter.Cr_ms);   
+  TestStep("","Cr_ms  = %d ",gCommunicationParameter.Cr_ms);
+  write("Cs_ms  = %d ",gCommunicationParameter.Cs_ms);   
+  TestStep("","Cs_ms  = %d ",gCommunicationParameter.Cs_ms);
+  
+  //CanFDMode
+  if(@CANType::CANFD==1)//如果是CANFD的协议
+  {
+    gCommunicationParameter.CANFDMode=1;
+    gCommunicationParameter.maxRxLength=4096;
+    CanTpSetAcceptOtherMode(gDiagHandle,gCommunicationParameter.acceptType);
+    CanTpSetMaxCANFDFrameLength(gDiagHandle, gCommunicationParameter.maxCANFDFrameLength);
+    CanTpSetBitRateSwitch(gDiagHandle, gCommunicationParameter.bitRateSwitch);
+    write("MaxCANFDFrameLength = %d, BitRateSwitch = %d",CanTpGetMaximumReceiveLength(gDiagHandle),gCommunicationParameter.bitRateSwitch);
+    teststep("","MaxCANFDFrameLength = %d, BitRateSwitch = %d",CanTpGetMaximumReceiveLength(gDiagHandle),gCommunicationParameter.bitRateSwitch);
+  }
+  
+  //填充位、最大接收长度设置
+  CanTpSetPadding(gDiagHandle, gCommunicationParameter.paddingValue);//填充位设置
+  write("CanTpPaddingValue = 0x%X",CanTpGetPadding(gDiagHandle));
+  teststep("","CanTpPaddingValue = 0x%X",CanTpGetPadding(gDiagHandle)); 
+  CanTpSetMaximumReceiveLength(gDiagHandle,gCommunicationParameter.maxRxLength);//CanTP最大接收长度设置
+  write("CanTpMaxRxLength = %d",CanTpGetMaximumReceiveLength(gDiagHandle)); 
+  teststep("","CanTpMaxRxLength = %d",CanTpGetMaximumReceiveLength(gDiagHandle));
+  
+ 
+  diagSetTarget(ECUName);//主要是为了安全解锁之类的需要调用安全算法动态库，
+                         //这个时候如果诊断layer里面添加了dll就能用到capl里面的秘钥生成函数
+  return 1;
+}
+
+/// <CanTpParameters>
+void canTpDeinitial()
+{
+  //断开连接
+ 
+  CanTpCloseConnection(gDiagHandle);
+}
+
+
+/// <CanTpCallBack>
+void CanTp_SendCon(long connHandle, dword count)
+{
+  //数据发送完成 
+  DiagTxTime = TimeNowNS()/1000000000.0;
+  TestSupplyTextEvent(cCANTPSendComplete);//发送完成,触发Text事件
+}
+
+/// <UseForDTCTest>
+void CanTp_ReceptionInd(long connHandle, byte data[])
+{
+  //接收完成
+  int i;
+ 
+  DiagRxTime = TimeNowNS()/1000000000.0; //s
+  
+  
+  if(((gExpectedResponse == data[0])&&(data[0]!=0x62&&data[0]!=0x6E))|| (data[0] == 0x7F && data[1] == gExpectedResponse-0x40))
+  {
+    
+    gCANTPRxDataLength = elCount(data);
+    for(i=0;i<elcount(data);i++)
+    {
+      gCANTPRxBuffer[i] = data[i];
+    }
+    //write("TestSupplyTextEvent(cCANTPReceivedData)");
+    TestSupplyTextEvent(cCANTPReceivedData);//接收完成,触发Text事件
+  }
+  else if(((gExpectedResponse == data[0])&&(data[0]==0x62||data[0]==0x6E))|| (data[0] == 0x7F && data[1] == gExpectedResponse-0x40))
+  {
+    if((data[1]==DiagTxBuf[1])&&(data[2]==DiagTxBuf[2]))
+    {
+      
+     gCANTPRxDataLength = elCount(data);
+     for(i=0;i<elcount(data);i++)
+     {
+      gCANTPRxBuffer[i] = data[i];
+     }
+    //write("TestSupplyTextEvent(cCANTPReceivedData)");
+     TestSupplyTextEvent(cCANTPReceivedData);//接收完成,触发Text事件
+    }
+  }
+}
+
+/// <CanTpCallBack>
+void CanTp_ErrorInd(long connHandle,long error)
+{
+  float ErrorTimeStamp;
+  
+  ErrorTimeStamp = TimeNowNS()/1000000000.0; //current time in seconds
+  write( "#%f::Error %d for connection %d", ErrorTimeStamp, error, connHandle);
+  testStepFail("","#%f::Error %d for connection %d", ErrorTimeStamp, error, connHandle);
+  switch (error)
+  {
+    case 0:     
+       write("#%f::----CAPL: Error (%d): OK, no error", ErrorTimeStamp, error);             
+       testStepFail("","#%f::----CAPL: Error (%d): OK, no error", ErrorTimeStamp, error);             
+       break;
+    case 1:     
+      write("#%f::----CAPL: Error (%d): Timeout waiting for CF", ErrorTimeStamp, error);      
+      testStepFail("","#%f::----CAPL: Error (%d): Timeout waiting for CF", ErrorTimeStamp, error); 
+      break;
+    case 2:    
+      write("#%f::----CAPL: Error (%d): Timeout waiting for FC", ErrorTimeStamp, error);      
+      testStepFail("","#%f::----CAPL: Error (%d): Timeout waiting for FC", ErrorTimeStamp, error);      
+      break;
+    case 3:     
+      write("#%f::----CAPL: Error (%d): Received Wrong SN", ErrorTimeStamp, error);            
+      testStepFail("","#%f::----CAPL: Error (%d): Received Wrong SN", ErrorTimeStamp, error);           
+      break;
+    case 4:     
+      write("#%f::----CAPL: Error (%d): TxBusy, only one transmission possible at the same time", ErrorTimeStamp, error);  
+      testStepFail("","#%f::----CAPL: Error (%d): TxBusy, only one transmission possible at the same time", ErrorTimeStamp, error);   
+      break;
+    case 5:     
+      write("#%f::----CAPL: Error (%d): Received unexpected PDU", ErrorTimeStamp, error);   
+      testStepFail("","#%f::----CAPL: Error (%d): Received unexpected PDU", ErrorTimeStamp, error);    
+      break;
+    case 6:     
+      write("#%f::----CAPL: Error (%d): Timeout while trying to send a CAN message", ErrorTimeStamp, error);   
+      testStepFail("","#%f::----CAPL: Error (%d): Timeout while trying to send a CAN message", ErrorTimeStamp, error);   
+      break;
+    case 7:     
+      write("#%f::----CAPL: Error (%d): Too many FC.WFT sent", ErrorTimeStamp, error);  
+      testStepFail("","#%f::----CAPL: Error (%d): Too many FC.WFT sent", ErrorTimeStamp, error);   
+      break;
+    case 8:     
+      write("#%f::----CAPL: Error (%d): Receiver buffer overflow", ErrorTimeStamp, error);    
+      testStepFail("","#%f::----CAPL: Error (%d): Receiver buffer overflow", ErrorTimeStamp, error);   
+      break;  
+    case 9:     
+      write("#%f::----CAPL: Error (%d): Wrong parameter", ErrorTimeStamp, error);                     
+      testStepFail("","#%f::----CAPL: Error (%d): Wrong parameter", ErrorTimeStamp, error);        
+      break;              
+    case 10:     
+      write("#%f::----CAPL: Error (%d): Invalid flow status received", ErrorTimeStamp, error);                   
+      testStepFail("","#%f::----CAPL: Error (%d): Invalid flow status received", ErrorTimeStamp, error);      
+      break;              
+    case 11:     
+      write("#%f::----CAPL: Error (%d): Transfer has been aborted explicitly", ErrorTimeStamp, error);      
+      testStepFail("","#%f::----CAPL: Error (%d): Transfer has been aborted explicitly", ErrorTimeStamp, error);         
+      break;             
+    case 12:     
+      write("#%f::----CAPL: Error (%d): No data has been provided for transmission in time", ErrorTimeStamp, error);   
+      testStepFail("","#%f::----CAPL: Error (%d): No data has been provided for transmission in time", ErrorTimeStamp, error);    
+      break; 
+    default:    
+      write("#%f::----CAPL: Error (%d): unknown error", ErrorTimeStamp, error);   
+      testStepFail("","#%f::----CAPL: Error (%d): unknown error", ErrorTimeStamp, error);        
+      break;                
+      }
+}
+
+/// <OutputResult>
+void formatSendLine(char strSend[])
+{
+  char strData[100];
+  BytesToHexString(DiagTxBuf, DiagTxBufLen, 0, strData);
+  snprintf(strSend, elcount(strSend), "%.6f -> 发送：%s", DiagTxTime, strData);
+  write(strSend);
+  if(UseAPI==1)//如果使用的是CanTpSendDataComplete函数去发送指令，需要单步执行打印语句
+     teststep("",strSend);//用这个打印的前提是不用outputResult函数去输出完整指令，不然会重复打印
+}
+
+
+/// <OutputResult>
+void formatResultLine(char strResult[], enum DiagResult result)
+{
+  char strData[300];
+  switch(result)
+  {
+    case DiagOK:
+      BytesToHexString(gCANTPRxBuffer, gCANTPRxDataLength, 0, strData);
+      snprintf(strResult, elcount(strResult), "%.6f -> 接收：%s(正响应）", DiagRxTime, strData);
+      break;
+    case diagRxNegResp:
+    case DiagRxPending:
+      BytesToHexString(gCANTPRxBuffer, gCANTPRxDataLength, 0, strData);
+      snprintf(strResult, elcount(strResult), "%.6f -> 接收：%s(负响应NRC:0x%02X）", DiagRxTime, strData, gCANTPRxBuffer[2]);
+      break;
+    case DiagRxTimeout:
+      snprintf(strResult, elcount(strResult), "%.6f -> 接收：P2或P2*超时无响应", DiagRxTime);
+      break;
+    default:
+      snprintf(strResult, elcount(strResult), "%.6f -> 接收：未处理的期望，等待代码完善！ 错误码->%d", DiagRxTime, result);
+      break;
+  }
+   write(strResult);
+  if(UseAPI==1)//如果使用的是CanTpSendDataComplete函数去发送指令，需要单步执行打印语句
+   {
+    teststep("",strResult);//用这个打印的前提是不用outputResult函数去输出完整指令，不然会重复打印
+   
+    }
+}
+
+/// <OutputResult>
+void formatExpectLine(char strExpect[], enum DiagResult expectResult, int expectNrcCode)
+{
+  switch(expectResult)
+  {
+    case DiagOK:
+      snprintf(strExpect, elcount(strExpect), "-> 期望：正响应！");
+      break;
+    case DiagRxTimeout:
+      snprintf(strExpect, elcount(strExpect), "-> 期望：超时无响应！");
+      break;
+    case diagRxNegResp:
+      snprintf(strExpect, elcount(strExpect), "-> 期望：负响应，收到NRC%X", expectNrcCode);
+      break;
+    default:
+      snprintf(strExpect, elcount(strExpect), "-> 期望：未处理的期望，等待代码完善！");
+      break;
+  }
+  
+ write(strExpect);
+ if(UseAPI==1)//如果使用的是CanTpSendDataComplete函数去发送指令，需要单步执行打印语句
+     teststep("",strExpect);//用这个打印的前提是不用outputResult函数去输出完整指令，不然会重复打印
+}
+
+/// <OutputResult>
+//适合OutPutResultFormat这个group里面的接口去使用来打印，其他的则可以考虑单步去打印，前置条件是UseAPI =1
+void outputResult(int steps, enum DiagResult result, enum DiagResult expectResult, int expectNrc)
+{
+  char strOutput[1000];
+  char ident[10];
+  char strSend[300], strResult[300], strExpect[300];
+  
+  FormatSendLine(strSend);
+  FormatResultLine(strResult, result);
+  FormatExpectLine(strExpect,  expectResult, expectNrc);
+
+  
+  snprintf(strOutput, elcount(strOutput), "%s\n%s\n\t%s", strSend, strResult, strExpect);
+  snprintf(ident, elCount(ident), "%d", steps);
+  if(result == expectResult)
+      testStepPass(ident, strOutput);
+  else
+      testStepFail(ident, strOutput);  
+}
+
+
+
+/// <UseForDiagTest>
+//特点是可以指定发送功能还是物理寻址情况，主要用于纯诊断正负反馈测试
+enum DiagResult DiagSendData(enum AddressMode addressMode)
+{ 
+  enum DiagResult result;
+  int status;
+  char strtemp[1024];
+  
+  //发送之前，把接收长度置0
+  gCANTPRxDataLength = 0;   
+  
+  if(addressMode == FunRequest)
+    CanTpSetTxIdentifier(gDiagHandle,gCommunicationParameter.funTxID);//功能寻址
+  else
+    CanTpSetTxIdentifier(gDiagHandle,gCommunicationParameter.phyTxID);//物理寻址
+  gExpectedResponse = DiagTxBuf[0] + 0x40;
+  CanTpSendData(gDiagHandle,DiagTxBuf,DiagTxBufLen);//发送开始
+  status = testWaitForTextEvent(cCANTPSendComplete,gCommunicationParameter.diagRequestTimeout);//等待发送完成
+  
+  //发送成功
+  if(status == 1)
+  {
+    result = DiagOK;
+   // formatSendLine(strtemp);//如果用out put result这里就注释掉
+  }
+  else
+    result =  DiagTxError;
+  
+  return result;
+}
+
+/// <CanTpCallBack>
+//DiagSendData的接收响应函数
+enum DiagResult DiagReceiveData(enum SuppressBitFlag suppressBit)
+{
+  int status;   
+  float startWaitTime;
+  
+  startWaitTime = TimeNowNS()/1000000000.0;     //开始等待时间,s
+
+  status = testWaitForTextEvent(cCANTPReceivedData,gCommunicationParameter.p2ClientTimeout);//第1次等待接收完成，150ms超时
+  //write("status:%d",status);
+  
+  DiagRxTime = TimeNowNS()/1000000000.0; //s
+  if(status == 0)       // 超时
+  {
+    if(suppressBit == SuppressOn)
+      return DiagOK;
+    else
+      return DiagRxTimeout; //P2时间内没有收到响应
+  }
+  else if(status == 1)  //接收到响应
+  {
+    if(gCANTPRxBuffer[0] == (DiagTxBuf[0] + 0x40))
+    {
+      return DiagOK;
+    }  
+    //接收到 Negative Response
+    else if(gCANTPRxBuffer[0] == 0x7F && gCANTPRxBuffer[1] == DiagTxBuf[0]) 
+    {
+      if(gCANTPRxBuffer[2] != 0x78)
+        return diagRxNegResp;
+      else
+      {
+        while(TimeNowNS()/1000000000.0 < startWaitTime + MaximumWaitTime/1000.0)
+        {
+          status = testWaitForTextEvent(cCANTPReceivedData, gCommunicationParameter.p2EnhanceClientTimeout);//等待接收完成
+          DiagRxTime = TimeNowNS()/1000000000.0; //s
+          if(status == 0)       // 超时
+          {
+            return DiagRxTimeout; //P2*时间内没有收到响应
+          }else if(status == 1)
+          {
+            if(gCANTPRxBuffer[0] == (DiagTxBuf[0] + 0x40))
+            {
+              return DiagOK;
+            }  
+            else if(gCANTPRxBuffer[0] == 0x7F && gCANTPRxBuffer[1] == DiagTxBuf[0] && gCANTPRxBuffer[2] != 0x78) 
+              return diagRxNegResp;
+            //其他情况，继续等待
+          }
+          else
+            return DiagRxError;
+        }
+        return  DiagRxTimeout;
+      }
+    }
+    //接收到 Error Response
+  } 
+  return DiagRxError;
+}
+
+/// <UseForDiagTest>
+//DiagSendData和DiagReceiveData的上层封装，实现了诊断请求和回复的连贯处理
+enum DiagResult DiagRequestResponse(enum AddressMode addressMode, enum SuppressBitFlag suppressBit)
+{
+  enum DiagResult result;
+  
+  //发送数据
+  result = DiagSendData(addressMode);
+  if(result != DiagOK)
+    return result;
+  
+  return DiagReceiveData(suppressBit);
+}
+
+/// <OutPutResultFormatFuc>
+//OutPutResultFormat组下面的这些诊断服务实例用的是DiagRequestResponse的底层接口，主要是用于判断诊断请求的正负反馈
+enum DiagResult Service10_SessionControl(enum AddressMode addressMode, enum SessionType sessionType, enum SuppressBitFlag suppressBit)
+{
+  DiagTxBufLen = 2;
+  DiagTxBuf[0] = 0x10;
+  DiagTxBuf[1] = sessionType; 
+  if(suppressBit == SuppressOn)
+    DiagTxBuf[1] += 0x80;
+  
+  return DiagRequestResponse(addressMode, suppressBit);
+}
+
+
+/// <OutPutResultFormatFuc>
+enum DiagResult Service85_DtcControl(enum AddressMode addressMode, enum DTCControlType dtcType, enum SuppressBitFlag suppressBit)
+{
+  DiagTxBufLen = 2;
+  DiagTxBuf[0] = 0x85;
+  DiagTxBuf[1] = dtcType; 
+  if(suppressBit == SuppressOn)
+    DiagTxBuf[1] += 0x80;
+  
+  return DiagRequestResponse(addressMode, suppressBit);
+}
+
+
+/// <OutPutResultFormatFuc>
+enum DiagResult Service14_ClearDTC(enum AddressMode addressMode, dword dtc)//诊断地址，物理寻址/功能寻址
+{
+  DiagTxBufLen = 4;
+  DiagTxBuf[0] = 0x14;
+  DiagTxBuf[1] = (dtc>>16) & 0xFF;
+  DiagTxBuf[2] = (dtc>>8) & 0xFF;
+  DiagTxBuf[3] = dtc & 0xFF;
+
+  return DiagRequestResponse(addressMode, SuppressOff);
+}
+
+
+/// <OutPutResultFormatFuc>
+enum DiagResult Service19_ReadDTC(enum AddressMode addressMode, byte subId, byte statusMask)
+{
+  DiagTxBuf[0] = 0x19;
+  DiagTxBuf[1] = subId;
+  //1901 通过状态掩码读取DTC的个数
+  //1902 读取查询指定的DTC
+  if(subId == 0x01 || subId == 0x02)
+  {
+    DiagTxBufLen = 3; 
+    DiagTxBuf[2] = statusMask;
+  }
+//  CompareDataBuf[0] = 0x59;
+//  CompareDataBuf[1] = 0x01;//ReportNumberOfDTCByStatusMask
+//  CompareDataBuf[2] = DTCStatusAvlMask;//DTCStatusAvailabilityMask
+//  CompareDataBuf[3] = 0x01;//00:ISO15031-6DTCFormat; 01:ISO14229-1DTCFormat
+//  CompareDataBuf[4] = 0x00;//DTCCountHighByte
+//  CompareDataBuf[5] = 0x00;//DTCCountLowByte
+  
+//  CompareDataBuf[0] = 0x59;
+//  CompareDataBuf[1] = 0x02;//ReportNumberOfDTCByStatusMask
+//  CompareDataBuf[2] = DTCStatusAvlMask;//DTCStatusAvailabilityMask
+//  CompareDataBuf[3] = (DTCCode>>16) & 0xFF;//DTCHighByte#1
+//  CompareDataBuf[4] = (DTCCode>>8) & 0xFF;//DTCLowByte#1
+//  CompareDataBuf[5] = DTCCode & 0xFF;//DTCFailureTypeByte#1
+//  CompareDataBuf[6] = DTCStatus;//statusOfDTC#1
+
+  return DiagRequestResponse(addressMode, SuppressOff);
+}
+
+
+/// <OutPutResultFormatFuc>
+enum DiagResult Service19_ReadDTC(enum AddressMode addressMode, byte subId, dword dtc, byte recordNumber)
+{
+  DiagTxBuf[0] = 0x19;
+  DiagTxBuf[1] = subId;
+
+  if(subId == 0x04 || subId == 0x06)
+  {
+    DiagTxBufLen = 6; 
+    DiagTxBuf[2] = (dtc>>16) & 0xFF;
+    DiagTxBuf[3] = (dtc>>8) & 0xFF;
+    DiagTxBuf[4] = dtc & 0xFF;
+    DiagTxBuf[5] = recordNumber;
+  }
+
+  return DiagRequestResponse(addressMode, SuppressOff);
+}
+
+/// <OutPutResultFormatFuc>
+//for example
+void Request_service_10()
+{
+  enum DiagResult result;
+  
+  result=Service10_SessionControl(PhyRequest,ExtendSession,SuppressOff);
+  outputResult(1,result,DiagOK,0);
+}
+

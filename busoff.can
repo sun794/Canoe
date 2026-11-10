@@ -1,0 +1,15 @@
+/*@!Encoding:936*/
+includes
+{
+  
+}
+
+variables
+{
+  
+}
+
+on busoff  
+{
+  resetCanEx(this.can);
+}

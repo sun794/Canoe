@@ -1,0 +1,386 @@
+/*@!Encoding:936*/
+/***************************************************
+基础的诊断服务
+  1.创建和断开诊断链接
+
+***************************************************/
+includes
+{
+  #include "CANTP.cin"
+  #include "diagDataProcessing.cin"
+}
+
+variables
+{
+  const int gSeedSize =4;//种子长度
+  int securitylevel =1;//安全验证等级
+  byte CalKey[gSeedSize];//key
+  const int cMaxDTCNum = 1023;
+ 
+  
+  
+  enum bool
+  {
+    False = 0,
+    True = 1
+  };
+  struct DTCInfo
+  {
+    dword DTC;
+    byte DTCStatus;
+  };
+  const int gAddreMode=0;
+ 
+  struct DTCExtDataRecord  //扩展信息
+  {
+    byte  ExtDataRecNum;//最大为0xff，表示需要回复所有编号组的扩展数据
+    byte  ExtRecordList[0xFF];
+  }ExtDataRecordList;
+  
+  const byte SnapShotDIDNum=4;//快照DID的数量
+  struct SnapshotRecord
+    {
+      word SnapshotDID;
+      int SnapshotDIDDataLen;
+      byte SnapshotDIDData[255];
+    };
+    
+  struct DTCSnapShotRecord
+  {
+    byte SnapshotRecordNumber;//最大为0xff，表示需要回复所有编号组的快照数据
+    struct SnapshotRecord StoredSnapshotRecord[0xFF];  
+  }SnapshotRecordList;
+  //根据规范定义的快照DID和长度填写下面的数组
+  word SnapShotDID[SnapShotDIDNum][2]={{0x0112,1},{0xE101,3},{0xD001,1},{0x010B,6}};//快照的DID号和数据长度 (填写格式:DID,DataLen)
+}
+
+
+
+/// <DiagAndCommuniteManage>
+int DiagnosticSessionControl(long CANTPHandle,byte sessionType)
+{
+  DiagTxBuf[0]= 0x10;
+  DiagTxBuf[1]= sessionType;
+
+  DiagTxBufLen=2;
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+  return WaitServerResponse();
+}
+
+
+/// <DiagAndCommuniteManage>
+int ResetECU(long CANTPHandle,byte resetType)
+{
+  DiagTxBuf[0]= 0x11;
+  DiagTxBuf[1]= resetType;
+  DiagTxBufLen=2;
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+  return WaitServerResponse();
+}
+
+
+/// <DiagAndCommuniteManage>
+int SecurityAccess(long CANTPHandle,byte securityLevel,byte seed[])//依赖于CDD添加的安全算法动态库
+{
+                      //store the seed received from server
+
+  //请求Seed
+  if(RequestSeed(CANTPHandle,securityLevel,seed) < 0)
+  {
+    return -1;
+  }
+  
+  //发送Key
+  if(SendKey(CANTPHandle,securityLevel,seed) < 0)
+  {
+    return -2;
+  }
+  return 0;
+}
+
+
+/// <DiagAndCommuniteManage>
+int RequestSeed(long CANTPHandle,byte securityLevel,byte seed[])
+{
+  int i;
+ 
+  DiagTxBuf[0] = 0x27;
+  DiagTxBuf[1] = securityLevel;
+  DiagTxBufLen=2;
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+  if(WaitServerResponse() != 0)
+  {
+    return -1;
+  }
+  
+  for(i=0;i<gSeedSize;i++)
+  {
+    seed[i] = gCANTPRxBuffer[i+2];
+  }
+  return 0;
+}
+
+
+/// <DiagAndCommuniteManage>
+int SendKey(long CANTPHandle,byte securityLevel,byte seed[])//依赖于CDD添加的安全算法动态库
+{
+ 
+  char  variant[1]  = "";
+  char  option[1]  = "";
+  dword maxKeyArraySize = 255;
+  dword actualSize  = 0;
+  int i;
+  
+  DiagTxBuf[0]= 0x27;
+  DiagTxBuf[1] = securityLevel+1;
+  DiagGenerateKeyFromSeed(seed, gSeedSize, securityLevel, variant, option, CalKey, maxKeyArraySize, actualSize);
+  
+  for(i=0;i<actualSize;i++)
+  {
+    DiagTxBuf[i+2] = CalKey[i];
+  }
+  DiagTxBufLen = actualSize+2;
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+  return WaitServerResponse();
+}
+
+
+/// <DiagAndCommuniteManage>
+int CommunicationControl(long CANTPHandle,byte controlType,byte communicationType)
+{
+ 
+  DiagTxBuf[0] = 0x28;
+  DiagTxBuf[1] = controlType;
+  DiagTxBuf[2] = communicationType;
+  DiagTxBufLen=3;
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+  return WaitServerResponse();
+}
+
+
+/// <Routine>
+int TesterPresent(long CANTPHandle,enum bool suppressPosRspMsgIndicationBit)
+//TODO 响应抑制位需要在WaitServerResponse中进一步处理
+{
+  DiagTxBuf[0]= 0x3E;
+  DiagTxBuf[1]= 0x00;
+  DiagTxBufLen=2;
+  if(suppressPosRspMsgIndicationBit == True)
+  {
+    DiagTxBuf[1] = 0x80;
+  }
+  
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+  return 0;
+}
+
+
+/// <DiagAndCommuniteManage>
+int ControlDTCSetting(long CANTPHandle,byte DTCSettingType,byte DTCSettingControlOptionRecord[])
+{
+  int i;
+  DiagTxBuf[0] = 0x85;
+  DiagTxBuf[1] = DTCSettingType;
+  for(i=0;i<elcount(DTCSettingControlOptionRecord);i++)
+  {
+    DiagTxBuf[2+i] = DTCSettingControlOptionRecord[i];
+  }
+  DiagTxBufLen = elCount(DTCSettingControlOptionRecord)+2;
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+  return WaitServerResponse();
+}
+
+
+/// <DataTransmission>
+int ReadDataByID(long CANTPHandle,byte dataIdentifier[])
+{
+  DiagTxBuf[0]=0x22;
+  DiagTxBuf[1] = dataIdentifier[0];
+  DiagTxBuf[2] = dataIdentifier[1];
+  DiagTxBufLen=3;
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+  return WaitServerResponse();
+}
+
+
+/// <DataTransmission>
+int WriteDataByID(long CANTPHandle,byte dataIdentifier[],byte dataRecord[])
+{
+  int i;
+  DiagTxBuf[0] = 0x2E;
+  DiagTxBuf[1] = dataIdentifier[0];
+  DiagTxBuf[2] = dataIdentifier[1];
+  DiagTxBufLen = 3 + elcount(dataRecord);
+  for(i=0;i<elcount(dataRecord);i++)
+  {
+    DiagTxBuf[i+3] = dataRecord[i];
+  }
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+  return WaitServerResponse();
+}
+
+
+/// <StoredDataTransmission>
+//StoredDataTransmission组下面的的诊断服务实例用的是CanTpSendDataComplete和WaitServerResponse的接口，主要是做数据处理，适用场景是测试故障注入
+int ClearDiagnosticInformation(long CANTPHandle,byte groupOfDTC[])
+{
+  int i;
+  DiagTxBuf[0]=0x14;
+  DiagTxBuf[1]=0x00;
+  DiagTxBuf[2]=0x00;
+  DiagTxBuf[3]=0x00;
+  DiagTxBufLen=4;
+  
+  for(i=0;i<3;i++)
+  {
+    DiagTxBuf[i+1] = groupOfDTC[i];
+  }
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+  return WaitServerResponse();
+}
+
+
+/// <StoredDataTransmission>
+int ReadFaultMemory(long CANTPHandle,byte subFunc,byte DTCstatusMask)
+{
+  DiagTxBuf[0]=0x19;
+  DiagTxBuf[1] = subFunc;
+  DiagTxBuf[2] = DTCstatusMask;;
+  DiagTxBufLen=3;
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+  return WaitServerResponse();
+}
+
+
+/// <StoredDataTransmission>
+int ReadDTCByStatusMask(long CANTPHandle,byte DTCstatusMask,struct DTCInfo DTCList[])
+{
+  int DTCNum,i;
+  
+  if( ReadFaultMemory(CANTPHandle,0x02,DTCstatusMask) < 0)
+  {
+    return -1;
+  }
+  DTCNum = (gCANTPRxDataLength-3)/4;
+  for(i=0;i<DTCNum;i++)
+  {
+    DTCList[i].DTC = (gCANTPRxBuffer[4*i+3] << 16) + (gCANTPRxBuffer[4*i+4] << 8) + gCANTPRxBuffer[4*i+5];
+    DTCList[i].DTCStatus = gCANTPRxBuffer[4*i+6];
+  }
+  return DTCNum;
+}
+/// <StoredDataTransmission>
+int ReadDTCExtDataRecord(long CANTPHandle,dword DTC,byte DTCExtDataRecordNumber)
+{
+  dword RxDataLen;
+  int i;
+  DiagTxBuf[0] = 0x19;
+  DiagTxBuf[1] = 0x06;
+  DiagTxBuf[2] = (Byte)(DTC>>16);
+  DiagTxBuf[3] = (Byte)(DTC>>8);
+  DiagTxBuf[4] = (Byte)DTC;
+  DiagTxBuf[5] = DTCExtDataRecordNumber;
+  DiagTxBufLen=6;
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+
+  if(WaitServerResponse()==0)//等于0为正反馈（包括收到了NRC78的响应）
+  {
+   
+    RxDataLen=gCANTPRxDataLength-6;//减去前面扩展记录组编号之前的数据
+    ExtDataRecordList.ExtDataRecNum = gCANTPRxBuffer[6];//将扩展数据组编号记录下来\
+    if(DTCExtDataRecordNumber<0xFE)
+    {
+      if(ExtDataRecordList.ExtDataRecNum!=DTCExtDataRecordNumber)//比较请求和实际ECU回复的编号
+    {
+      testStepFail("","请求回复扩展记录数组编号为0x%02X,ECU实际回复扩展记录数组编号为0x%02X",DTCExtDataRecordNumber,ExtDataRecordList.ExtDataRecNum);
+      write("请求回复扩展记录数组编号为0x%02X,ECU实际回复扩展记录数组编号为0x%02X",DTCExtDataRecordNumber,ExtDataRecordList.ExtDataRecNum);
+    }
+    for(i=0;i<RxDataLen;i++)
+     {
+      ExtDataRecordList.ExtRecordList[i]=gCANTPRxBuffer[6+i];
+     }
+    }
+    else
+    {
+     for(i=0;i<RxDataLen;i++)
+     {
+      ExtDataRecordList.ExtRecordList[i]=gCANTPRxBuffer[6+i];
+     } 
+    }
+   }
+  else
+  {
+    return -1;
+  }
+   return 0;
+}
+
+
+/// <StoredDataTransmission>
+int ReadDTCSnaShotRecord(long CANTPHandle,dword DTC,byte DTCSnapshotRecordNumber)
+{
+  int i,j;
+  int RxDataLen;
+  DiagTxBuf[0] = 0x19;
+  DiagTxBuf[1] = 0x04;
+  DiagTxBuf[2] = (Byte)(DTC>>16);
+  DiagTxBuf[3] = (Byte)(DTC>>8);
+  DiagTxBuf[4] = (Byte)DTC;
+  DiagTxBuf[5] = DTCSnapshotRecordNumber;
+  DiagTxBufLen=6;
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+ 
+  if(WaitServerResponse()==0)//等于0为正反馈（包括收到了NRC78的响应）
+  {
+    RxDataLen = gCANTPRxDataLength -7;//减去前面除快照DID和数据以外的回复字节
+    SnapshotRecordList.SnapshotRecordNumber = gCANTPRxBuffer[6];//将快照数据组编号存下来
+    if(SnapshotRecordList.SnapshotRecordNumber!=DTCSnapshotRecordNumber)//比较请求和实际ECU回复的编号
+    {
+      testStepFail("","请求回复快照记录数组编号为0x%02X,ECU实际回复快照记录数组编号为0x%02X",DTCSnapshotRecordNumber,SnapshotRecordList.SnapshotRecordNumber);
+      write("请求回复快照记录数组编号为0x%02X,ECU实际回复快照记录数组编号为0x%02X",DTCSnapshotRecordNumber,SnapshotRecordList.SnapshotRecordNumber);
+    }
+    for(i=0;i<SnapShotDIDNum;i++)//将这个几个快照信息都存储到结构体变量中
+    {
+      if(i==0)
+      {
+        SnapshotRecordList.StoredSnapshotRecord[i].SnapshotDID=gCANTPRxBuffer[7+i]<<8+gCANTPRxBuffer[7+i+1];//第一个快照DID
+      }
+      else
+      {
+         SnapshotRecordList.StoredSnapshotRecord[i].SnapshotDID=gCANTPRxBuffer[7+i+SnapshotRecordList.StoredSnapshotRecord[i].SnapshotDIDDataLen]<<8+gCANTPRxBuffer[7+i+1+SnapshotRecordList.StoredSnapshotRecord[i].SnapshotDIDDataLen];
+      }
+      for(j=0;j<SnapShotDIDNum;j++)
+      {
+        if( SnapshotRecordList.StoredSnapshotRecord[i].SnapshotDID==SnapShotDID[j][0])//如果是里面的ID，那么
+        {
+           SnapshotRecordList.StoredSnapshotRecord[i].SnapshotDIDDataLen=SnapShotDID[j][1];
+        }
+      }
+     
+     }
+  }
+  else
+  {
+    return -1;
+  }
+   return 1;
+}
+
+
+/// <Routine>
+int RoutineControl(long CANTPHandle,byte subFunc,byte routineControlOptionRecord[])
+{
+  int i;
+  DiagTxBuf[0] = 0x31;
+  DiagTxBuf[1] = subFunc;
+  for(i=0;i<elcount(routineControlOptionRecord);i++)
+  {
+    DiagTxBuf[i+2] = routineControlOptionRecord[i];
+  }
+   DiagTxBufLen = elcount(routineControlOptionRecord) + 2;
+  CanTpSendDataComplete(CANTPHandle,DiagTxBufLen);
+  return WaitServerResponse();
+}
+
+
+

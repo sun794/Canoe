@@ -1,0 +1,597 @@
+/*@!Encoding:936*/
+
+
+includes
+{
+
+}
+
+variables
+{
+  //通用定义
+  int TestNoAnwser;
+  enum AddressMode{FunctionalAddress, PhysicalAddress};
+  enum SuppressBitFlag{SuppressBitOff=0, SuppressBitOn=1};
+  enum DiagResult{DiagOK, DiagRxTimeout, DiagRxPending,DiagRxNegResponse, DiagRxPendingOver, DiagTxError, DiagRxError, DiagPramError, DiagGeneralError,UnKnownErr}; 
+  
+  //发送接收完成时间
+  float TxTime, RxTime;
+  int ReturnLen;
+  
+  //发送接收数据
+  byte DiagTxData[0x10000];
+  byte DiagRxData[0x10000];
+  int DiagTxDataLen;
+  int DiagRxDataLen;
+  byte CurrentSubFuc;//用来存储带子功能的诊断请求发送的子功能
+  byte NCheckSubFuc=0;//需要校验子功能的使能
+  //10服务
+  enum SessionType{DefaultSession=1, ProgrammingSession=2, ExtendedSession=3,FotaSession=0x42};
+  //11服务
+  enum ResetType{HardReset=1, KeyOffOnReset=2, SoftReset=3};
+  //31服务
+  enum RoutineControlType {StartRoutine=1, StopRoutine=2, RequestRoutineResults=3};
+
+  //85服务
+  enum DTCSettingType{DtcOn=1, DtcOff=2};
+  
+  //28服务
+  enum CommunicationControlType{EnableRxTx=0, EnableRxDisableTx=1, DisableRxEnableTx=2, DisableRxTx=3};
+  enum CommunicationType{NCM=1, NWMCM=2, NWMCN_NCM=3};
+  
+  //3E服务
+  
+    //诊断响应事件
+  char DiagResponseEvent[20] = "DiagResponseEvent";
+  enum DiagResult DiagResponseResult;
+  
+} 
+/// <Services>
+enum DiagResult Service10_SessionControl(enum AddressMode addressMode, enum SessionType sessionType, enum SuppressBitFlag suppressBit)
+{
+  diagRequest UDS_Diagnostic_Services_Generic.DiagnosticSessionControl_Process request;
+  byte sessionBytes[1];
+  
+    //初始化
+  diagInitialize(request);
+  NCheckSubFuc=1;//需要校验子功能
+  //填充数据
+  sessionBytes[0] = sessionType;
+  CurrentSubFuc=sessionBytes[0];//获取子功能
+  diagSetParameterRaw(request, "diagnosticSessionType", sessionBytes, elcount(sessionBytes));
+  diagSetSuppressResp(request, suppressBit);
+  
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+  
+  return DiagReceiveData(request);
+}
+
+
+/// <Services>
+enum DiagResult Service11_ECUReset(enum AddressMode addressMode, enum ResetType resetType, Enum SuppressBitFlag suppressBit)
+{
+  diagRequest UDS_Diagnostic_Services_Generic.EcuReset_Process request;
+  byte resetTypeBytes[1];
+  
+  //初始化
+  diagInitialize(request);
+  
+  //设置参数
+  NCheckSubFuc=1;//需要校验子功能
+  resetTypeBytes[0] = resetType;
+  CurrentSubFuc=resetTypeBytes[0];
+  diagSetParameterRaw(request, "resetType", resetTypeBytes, elcount(resetTypeBytes));
+  diagSetSuppressResp(request, suppressBit);
+  
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+  //接收数据
+  return DiagReceiveData(request);
+}
+
+/// <Services>
+enum DiagResult Service27_SecurityAccessSeed(enum AddressMode addressMode, byte securityAccessType, byte seedData[], byte seedDataLen)
+{
+  enum DiagResult result;
+  diagRequest UDS_Diagnostic_Services_Generic.SecurityAccess_Process request;
+  byte securityAccessTypeBytes[1];
+  
+  //初始化
+  diagInitialize(request);
+  
+  //设置参数
+  NCheckSubFuc=1;//需要校验子功能
+  securityAccessTypeBytes[0] = securityAccessType;
+  CurrentSubFuc= securityAccessTypeBytes[0];
+  diagSetParameterRaw(request, "securityAccessType", securityAccessTypeBytes, elcount(securityAccessTypeBytes));
+  
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+
+  //接收数据
+  result = DiagReceiveData(request);
+  if(result == DiagOK)
+  {
+    diagResponse request response;
+    diagGetLastResponse(request, response);
+    diagGetParameterRaw(response, "securitySeed", seedData, seedDataLen);
+  }
+  return result; 
+}
+
+/// <Services>
+enum DiagResult Service27_SecurityAccessKey(enum AddressMode addressMode, byte securityAccessType, byte keyData[], byte keyDataLen)
+{
+  enum DiagResult result;
+  diagRequest UDS_Diagnostic_Services_Generic.SecurityAccess_Process request;
+  byte securityAccessTypeBytes[1];
+  
+  //初始化
+  diagInitialize(request);
+  NCheckSubFuc=1;//需要校验子功能
+  //设置参数
+  securityAccessTypeBytes[0] = securityAccessType + 1;
+  CurrentSubFuc= securityAccessTypeBytes[0];
+  diagSetParameterRaw(request, "securityAccessType", securityAccessTypeBytes, elcount(securityAccessTypeBytes));
+  diagSetParameterRaw(request, "data", keyData, keyDataLen);
+  
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+  //接收数据
+  return DiagReceiveData(request);   
+}
+
+/// <Services>
+enum DiagResult Service22_ReadDataByIdentifier(enum AddressMode addressMode, word did, byte didData[], int didDataLen)
+{
+  diagRequest UDS_Diagnostic_Services_Generic.ReadDataByIdentifier_Process request;
+  enum DiagResult result;
+  byte didBytes[2];
+  
+  //初始化
+  diagInitialize(request);
+  
+  //设置参数
+  didBytes[0] = did >> 8;
+  didBytes[1] = did & 0xFF;
+  diagSetParameterRaw(request, "dataIdentifier", didBytes, elcount(didBytes));
+  
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+
+  //接收数据
+  result = DiagReceiveData(request);
+  if(result == DiagOK)
+  {
+    diagResponse request response;
+    diagGetLastResponse(request, response);
+    diagGetParameterRaw(response, "Data", didData, didDataLen);//实测这个函数无法获取到ECU返回的Data数据和长度，因此长度用了下面diagGetParameterSizeCoded去获取
+    //比较大的怀疑是这里didData和didDataLen没有定义一个实际大小，所以导致取不到值，参考安全算法获取key的demo示例，里面的种子和长度是提前声明大小的
+    ReturnLen=diagGetParameterSizeCoded(response, "Data")/8;//这个函数获取的是这个Data参数的bit长度，所以转换成字节长度要除以8（注意这里长度不包括SID和DID3个字节）
+    diagGetPrimitiveData(response,didData,didDataLen);//抽空试试用下面这个函数看能否获取ECU返回的全部数据(这里包括了SID和DID)
+  
+  }
+  return result;
+}
+
+/// <Services>
+enum DiagResult Service2E_WriteDataByIdentifier(enum AddressMode addressMode, word did, byte didData[], int didDataLen)
+{
+  diagRequest UDS_Diagnostic_Services_Generic.WriteDataByIdentifier_Process request;
+  byte didBytes[2];
+  
+    //初始化
+  diagInitialize(request);
+  
+  //设置参数
+  didBytes[0] = did >> 8;
+  didBytes[1] = did & 0xFF;
+  diagSetParameterRaw(request, "dataIdentifier", didBytes, elcount(didBytes));
+  diagSetParameterRaw(request, "dataRecord", didData, didDataLen);
+  
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+
+  //接收数据
+  return DiagReceiveData(request);
+}
+/// <Services>
+//读取支持的DTC码，但在日产项目中该请求用于进行刷写可行性判断
+enum DiagResult Service19_RequestAllSupportedDTCInformation(enum AddressMode addressMode)
+{
+  diagRequest UDS_Diagnostic_Services_Generic.ReadDTCInformation_Process request;
+  byte ReportType[1]=0x0A;
+    NCheckSubFuc=1;//需要校验子功能
+
+   CurrentSubFuc= ReportType[0];
+  //初始化
+  diagInitialize(request);
+  diagSetParameterRaw(request, "reportType", ReportType, elcount(ReportType));
+  
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+  //接收数据
+  return DiagReceiveData(request);
+}
+
+
+/// <Services>
+//读取DTC故障检测计数器(日产项目中使用)
+//回复格式 59 14 +DTCCode (BlockID(2byteDID)+type(1byte))+ Reprogrammed Counter(1byte)
+enum DiagResult Service19_RequestDTCFaultDetectionInformation(enum AddressMode addressMode)
+{
+  diagRequest UDS_Diagnostic_Services_Generic.ReadDTCInformation_Process request;
+  byte ReportType[1]=0x14;
+    NCheckSubFuc=1;//需要校验子功能
+  
+   CurrentSubFuc= ReportType[0];
+  //初始化
+  diagInitialize(request);
+  diagSetParameterRaw(request, "reportType", ReportType, elcount(ReportType));
+  
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+  //接收数据
+  return DiagReceiveData(request);
+}
+
+
+
+/// <Services>
+enum DiagResult Service14_ClearDiagnosticInformation(enum AddressMode addressMode, byte groupOfDTC[])
+{
+  diagRequest UDS_Diagnostic_Services_Generic.ClearDiagnosticInformation_Process request;
+  
+  //初始化
+  diagInitialize(request);
+  
+  diagSetParameterRaw(request, "groupOfDTC", groupOfDTC, elcount(groupOfDTC));
+  
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+  //接收数据
+  return DiagReceiveData(request);
+}
+
+
+
+/// <Services>
+enum DiagResult Service31_RoutineControl(enum AddressMode addressMode, enum RoutineControlType routineControlType, word routineId, byte routineData[], word routineDataLen)
+{
+  diagRequest UDS_Diagnostic_Services_Generic.RoutineControl_Process request;
+  byte routineControlTypeBytes[1];
+  byte routineIdBytes[2];
+  enum DiagResult result;
+  
+  //初始化
+  diagInitialize(request);
+  NCheckSubFuc=1;//需要校验子功能
+  routineControlTypeBytes[0] = routineControlType;
+  CurrentSubFuc=  routineControlTypeBytes[0];
+  write("CurrentSubFuc==%x",CurrentSubFuc);
+  routineIdBytes[0] = routineId >> 8;
+  routineIdBytes[1] = routineId & 0xFF;
+  
+  //填充数据
+  diagSetParameterRaw(request, "routineControlType", routineControlTypeBytes, elcount(routineControlTypeBytes));
+  diagSetParameterRaw(request, "Routine_Identfier", routineIdBytes, elcount(routineIdBytes));
+  
+  if(routineDataLen > 0)
+  {
+    diagSetParameterRaw(request, "routineControlOptionRecord", routineData, routineDataLen);
+   // write("routineDataLen=%d",routineDataLen);   
+  }
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+  if(TestNoAnwser)
+  {
+     testWaitForTimeout(200);//发送成功后就先等待一下
+  }
+  return DiagReceiveData(request);
+  
+//  
+//  //接收数据
+//  result = DiagReceiveData(request);
+//  if(result == DiagOK)
+//  {
+//    diagResponse request response;
+//    diagGetLastResponse(request, response);
+//    diagGetParameterRaw(response, "routineStatusRecord", routineData, routineDataLen);
+//  }
+//  return result;
+}
+
+/// <Services>
+enum DiagResult Service85_ControlDTCSetting(enum AddressMode addressMode, enum DTCSettingType dtcType, Enum SuppressBitFlag suppressBit)
+{
+  diagRequest UDS_Diagnostic_Services_Generic.ControlDTCSetting_Process request;
+  byte dtcTypeBytes[1];
+  
+  //初始化
+  diagInitialize(request);
+  DiagTxDataLen=0;
+  DiagRxDataLen=0;
+  NCheckSubFuc=1;//需要校验子功能
+  dtcTypeBytes[0] = dtcType;
+  CurrentSubFuc = dtcTypeBytes[0];
+  //设置参数
+  diagSetParameterRaw(request, "dtcSettingType", dtcTypeBytes, elcount(dtcTypeBytes));
+  diagSetSuppressResp(request, suppressBit);
+  
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+  
+  //接收数据
+  return DiagReceiveData(request);
+}
+
+/// <Services>
+enum DiagResult Service28_CommunicationControl(enum AddressMode addressMode, enum CommunicationControlType controlType, enum CommunicationType communicationType,Enum SuppressBitFlag suppressBit)
+{
+  diagRequest UDS_Diagnostic_Services_Generic.CommunicationControl_Process request;
+  byte controlTypeBytes[1];
+  byte communicationTypeBytes[1];
+  NCheckSubFuc=1;//需要校验子功能
+  controlTypeBytes[0] = controlType;
+  CurrentSubFuc = controlTypeBytes[0];
+  communicationTypeBytes[0] = communicationType;
+  
+  //初始化
+  diagInitialize(request);
+  DiagTxDataLen=0;
+  DiagRxDataLen=0;
+  
+  //填充key数据
+  diagSetParameterRaw(request, "controlType", controlTypeBytes, elcount(controlTypeBytes));
+  diagSetParameterRaw(request, "communicationType", communicationTypeBytes, elcount(communicationTypeBytes));
+  diagSetSuppressResp(request, suppressBit);
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+  //接收数据
+  return DiagReceiveData(request);   
+}
+
+/// <Services>
+enum DiagResult Service34_RequestDownload(enum AddressMode addressMode, byte dataFormatIdentifier, byte addressAndLengthFormatIdentifier,dword dataAddress, dword dataSize, word &maxNumberOfBlockLen)
+{
+  enum DiagResult result;
+  diagRequest UDS_Diagnostic_Services_Generic.RequestDownload_Process request;
+  int addressLen, dataSizeLen;
+  int counter;
+  
+  byte addressAndSizeBytes[8];
+  
+  //初始化
+  diagInitialize(request);
+  DiagTxDataLen=0;
+  DiagRxDataLen=0;
+  
+  addressLen = addressAndLengthFormatIdentifier >> 4;
+  dataSizeLen = addressAndLengthFormatIdentifier & 0xF;
+  
+  DiagSetPrimitiveByte(request, 1, dataFormatIdentifier);
+  DiagSetPrimitiveByte(request, 2, addressAndLengthFormatIdentifier);
+  
+  for(counter=0; counter<addressLen; counter++)
+  {
+    addressAndSizeBytes[counter] = (dataAddress >> ((addressLen-counter-1)*8)) & 0xFF;
+  }
+  for(counter=0; counter<dataSizeLen; counter++)
+  {
+    addressAndSizeBytes[counter+addressLen] = (dataSize >> ((dataSizeLen-counter-1)*8)) & 0xFF;
+  }
+  
+  diagSetParameterRaw(request, "memorySpecification", addressAndSizeBytes, addressLen+dataSizeLen);
+  
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+  //接收数据
+  result = DiagReceiveData(request);
+  if(result == DiagOK)
+  {
+    byte bytesLenBytes[1];
+    byte bytesLen;
+    byte maxNumberOfBlockLengthBytes[4];
+    
+    diagResponse request response;
+    diagGetLastResponse(request, response);
+    
+    diagGetParameterRaw(response, "lengthFormatIdentifier", bytesLenBytes, 1);// 74 20 -> 2
+    bytesLen = bytesLenBytes[0] >> 4;
+    diagGetParameterRaw(response, "maxNumberOfBlockLength", maxNumberOfBlockLengthBytes, elcount(maxNumberOfBlockLengthBytes));
+    
+    maxNumberOfBlockLen = 0;
+    for(counter=0;counter<bytesLen;counter++)
+      maxNumberOfBlockLen = maxNumberOfBlockLen*0x100 + maxNumberOfBlockLengthBytes[counter];
+  }
+  return result;
+}
+
+
+/// <Services>
+enum DiagResult Service36_TransferData(enum AddressMode addressMode, byte blockSequenceCounter, byte data[], word dataLen)
+{
+  enum DiagResult result;
+  diagRequest UDS_Diagnostic_Services_Generic.TransferData_Process request;
+  int i;
+  
+  //初始化
+  diagInitialize(request);
+  DiagTxDataLen=0;
+  DiagRxDataLen=0;
+  
+  diagResize (request, 2+dataLen);
+  NCheckSubFuc=1;//需要校验子功能
+  CurrentSubFuc=blockSequenceCounter;//获取blockSequenceCounter
+  DiagSetPrimitiveByte(request, 0, 0x36);
+  DiagSetPrimitiveByte(request, 1, blockSequenceCounter);
+
+  for(i=0;i<dataLen;i++)
+  {
+    DiagSetPrimitiveByte(request, 2+i, data[i]);
+  }
+  
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+  //接收数据
+  result = DiagReceiveData(request);
+  return result;
+}
+
+
+/// <Services>
+enum DiagResult Service37_RequestTransferExit(enum AddressMode addressMode)
+{
+  enum DiagResult result;
+  diagRequest UDS_Diagnostic_Services_Generic.RequestTransferExit_Process request;
+  
+  //初始化
+  diagInitialize(request);
+  DiagTxDataLen=0;
+  DiagRxDataLen=0;
+  
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+  //接收数据
+  return DiagReceiveData(request);
+}
+
+/// <Services>
+enum DiagResult Service3E_RequestTestPresent(enum AddressMode addressMode,Enum SuppressBitFlag suppressBit)
+{
+  enum DiagResult result;
+  byte SubFuncBytes[1];
+  diagRequest UDS_Diagnostic_Services_Generic.TesterPresent_Process request;
+  
+  //初始化
+  diagInitialize(request);
+  NCheckSubFuc=1;//需要校验子功能
+  DiagTxDataLen=0;
+  DiagRxDataLen=0;
+  //填充数据
+  SubFuncBytes[0]=0x00;
+  CurrentSubFuc = SubFuncBytes[0];
+  diagSetParameterRaw(request, "zeroSubFunction", SubFuncBytes, elcount(SubFuncBytes));
+  diagSetSuppressResp(request, suppressBit);
+  //发送数据
+  if(DiagSendData(addressMode, request)!=DiagOK)
+    return DiagTxError;
+  //接收数据
+  return DiagReceiveData(request);
+}
+
+/// <DiagControl>
+enum DiagResult DiagSendData(enum AddressMode addressMode, diagRequest* sendRequest)
+{
+  int ret;
+ 
+  //获取发送的原始数据和长度，用于后续比较
+  DiagTxDataLen = diagGetPrimitiveData(sendRequest, DiagTxData, elcount(DiagTxData));
+  //发送数据
+  ret = (addressMode==FunctionalAddress) ? diagsendFunctional(sendRequest) : diagSendRequest(sendRequest);
+ 
+  testWaitForDiagRequestSent(sendRequest, 50);
+  
+  TxTime = TimeNowNS()/1000000000.0; 
+  
+  if(ret>=0)
+    return DiagOK;
+  else
+    return DiagTxError;
+}
+
+/// <DiagControl>
+enum DiagResult DiagReceiveData(diagRequest* sendRequest)
+{
+  int ret;
+  enum DiagResult diagResult;
+  int responseCode;
+  
+  //diagSetP2Extended(20*1000);
+  suppressbit = diagGetSuppressResp(sendRequest);
+ // ret = testWaitForDiagResponse(sendRequest, diagGetP2Extended());
+  if(suppressbit==0)//如果非禁止肯定响应的
+       ret = testWaitForDiagResponse(sendRequest,120000);//实际是5S超时退出了，后面的超时时间是留给收到NRC 78之后，允许在P2*+timeout时间内响应，不作为超时
+  else
+       ret=testWaitForDiagResponse(diagGetP2Timeout());
+  
+  //接收的时间
+  RxTime = TimeNowNS()/1000000000.0; 
+  
+  if(ret==0)//等待超时，判别抑制位
+  {
+    if(suppressbit==0)
+        diagResult = DiagRxTimeout;
+    else
+      diagResult = DiagOK;
+  }
+  else if(ret==1)//接收到响应,获取并判定数据结果
+  {
+    diagResponse sendRequest response;
+    diagGetLastResponse(sendRequest, response);
+    
+    DiagRxDataLen = response.GetPrimitiveData(DiagRxData, elcount(DiagRxData));//GetPrimitiveData()函数返回的是诊断请求反馈的完整Raw数据
+   
+    
+  
+   // write("接收到响应, responseCode=%d, 数据：%02X %02X", responseCode, DiagRxData[0], DiagRxData[1]);
+    responseCode = diagGetResponseCode (response);
+    if(responseCode == -1)//如果是正响应，这里需要注意的是DiagRxPending(0x78)协议栈也判断为正反馈
+     {
+      if(DiagRxData[0]!=0x7F && DiagRxData[2]!=0x78 && NCheckSubFuc==1)//由于NRC 0x78也默认为正响应，这里需要排除
+      {
+       if(CurrentSubFuc!=DiagRxData[1])//如果请求带子功能，这里就需要校验ECU回复的子功能
+      {
+       testStepFail("诊断子功能校验","0x%02X 服务 -----> ECU回复的诊断子功能为0x%02X,而诊断仪请求的子功能为0x%02X",DiagRxData[0]-0x40,DiagRxData[1],CurrentSubFuc);
+       write("0x%02X 服务 -----> ECU回复的诊断子功能为0x%02X,而诊断仪请求的子功能为0x%02X",DiagRxData[0]-0x40,DiagRxData[1],CurrentSubFuc);
+      }
+     else
+     {
+       //用于调试验证，后续可以关闭
+      //write("0x%02X 服务 -----> ECU回复的诊断子功能为与诊断仪请求的子功能一致,皆为0x%02X",DiagRxData[0]-0x40,DiagRxData[1]);
+     }
+      }
+      
+      diagResult = DiagOK;
+    }
+    else if(responseCode > 0)//NRC
+    {
+      write("response NRC = 0x%02x",responseCode);
+      //teststepFail("","response NRC= 0x%02x",responseCode);
+      diagResult = DiagRxNegResponse;}
+    else//没有接收到响应
+    {
+      write("Request No Response!");
+     // teststepFail("Request No Response!");
+      diagResult = DiagRxTimeout;
+    }
+  }
+  else  // Internal or setup error
+  {
+    //后面可修改成未知错误
+    diagResult = DiagRxTimeout;
+   
+  }
+  
+  CurrentSubFuc=0;//初始化标志位
+  NCheckSubFuc=0;//初始化标志位
+  
+  
+  return diagResult;
+}

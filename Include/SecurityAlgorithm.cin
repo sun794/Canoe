@@ -1,0 +1,125 @@
+/*@!Encoding:936*/
+
+void SeedToKeyLv1(byte seedData[], byte keyData[]/*, dword EncryptConstant*/) // 定义计算 Key 的功能函数，包括变量 Seed 和 EncryptConstant 为四个字节
+{
+    dword EncryptConstant;
+    dword Seed;
+  
+    dword wSubSeed;     // 定义变量 wSubSeed-四个字节
+    dword wMiddle;      // 定义变量 wMiddle-四个字节
+    dword wLastBit;     // 定义变量 wLastBit-四个字节
+    dword wLeft31Bits;  // 定义变量 wLeft31Bits-四个字节
+    dword counter;      // 定义变量 counter-四个字节
+    BYTE DB1, DB2, DB3; // 定义变量-都为一个字节
+    int middle, i;      // 定义整型数据变量
+    
+    // ASU x20001909
+    EncryptConstant =0x20001909;
+  
+    Seed = BytesToDword(seedData); 
+    //((dword)seedData[0] << 24) + ((dword)seedData[1] << 16) + ((dword)seedData[2] << 8) + (dword)seedData[3];
+  
+    wSubSeed = Seed;    // 将种子的值赋值给变量 wSubSeed
+    middle = (int)((EncryptConstant & 0x00010000) >> 15) | ((EncryptConstant & 0x00004000) >> 14);
+    // 掩码与值位与运算，保留低字节后两位
+    switch (middle) // 进行 switch 语句运算
+    {
+    case 0:                                          // 当 middle 值为 0，执行下面逻辑
+        wMiddle = (BYTE)(Seed & 0x000000ff);         // 种子与值进行位与运算
+        break;                                       // 执行完后跳出
+    case 1:                                          // 当 middle 值为 1，执行下面逻辑
+        wMiddle = (BYTE)((Seed & 0x0000ff00) >> 8);  // 种子与值进行与运算后右移 8 位
+        break;                                       // 执行完后跳出
+    case 2:                                          // 当 middle 值为 2，执行下面逻辑
+        wMiddle = (BYTE)((Seed & 0x00ff0000) >> 16); // 种子与值进行与运算后右移 16 位
+        break;                                       // 执行完后跳出
+    case 3:                                          // 当 middle 值为 3，执行下面逻辑
+        wMiddle = (BYTE)((Seed & 0xff000000) >> 24); // 种子与值进行与运算后右移 24 位
+        break;                                       // 执行完后跳出
+    }
+    DB1 = (BYTE)((EncryptConstant & 0x000007F8) >> 3);           // 掩码与值位与运算，保留低字节
+    DB2 = (BYTE)(((EncryptConstant & 0x7F800000) >> 23) ^ 0xA5); // 掩码与值进行位运算后右移 23 位，再与 0xA5 进行异或运算
+    DB3 = (BYTE)(((EncryptConstant & 0x003FC000) >> 14) ^ 0x5A); // 掩码与值进行位运算后右移 14 位，再与 0x5A 进行异或运算
+    counter = (dword)(((wMiddle ^ DB1) & DB2) + DB3);
+    // wMiddle 与 DB1 异或后再与 DB2 位运算，再与 DB3 相加后赋值给 counter
+    for (i = 0; i < counter; i++) // fou 语句循环
+    {
+        wMiddle = ((wSubSeed & 0x20000000) / 0x20000000) ^ ((wSubSeed & 0x01000000) / 0x01000000) ^ ((wSubSeed & 0x2000) / 0x2000) ^ ((wSubSeed & 0x08) / 0x08);
+        wLastBit = (wMiddle & 0x00000001);
+        wSubSeed = (dword)(wSubSeed << 1);
+        wLeft31Bits = (dword)(wSubSeed & 0xFFFFFFFE);
+        wSubSeed = (dword)(wLeft31Bits | wLastBit);
+    }                                 // fou 循环中，按照循环语句算出 wSubSeed，直到 i>= counter 停止
+    if (EncryptConstant & 0x00000002) // if 语句判断，若表达式为真，执行下面语句
+    {
+        wLeft31Bits = ((wSubSeed & 0x00FF0000) >> 16) | ((wSubSeed & 0xFF000000) >> 16) | ((wSubSeed & 0x000000FF) << 24) | ((wSubSeed & 0x0000FF00) << 8);
+    }
+    else                                     // if 语句判断，若表达式为假，执行下面语句
+        wLeft31Bits = wSubSeed;              // 第一个 for 循环中计算的值赋值给 wLeft31Bits
+    DwordToBytes(wLeft31Bits ^ EncryptConstant, keyData);// 最后计算出的 wLeft31Bits 与掩码位异或得到最终 Key
+}
+
+byte SeedToKeyLv2(byte seedData[], byte keyData[]) // 定义计算 Key 的功能函数，定义相关变量
+{
+    byte i; // 定义变量 i
+    byte bytesTemp[4];
+    dword dwordTemp;
+    // 定义变量 seedlokal 类型参考联合变量中变量
+    const dword mask = 0x20001909; // 定义变量的掩码-四个字节
+    
+  
+    if (seedData[0] == 0 && seedData[1] == 0) // if 语句，若表达式语句为真，执行下面逻辑
+    {
+        return 0;
+    }   
+    else // 若 if 语句，表达式语句为假，执行下面逻辑
+    {
+        dwordTemp = ((dword)seedData[0] << 24) + ((dword)seedData[1] << 16) + ((dword)seedData[2] << 8) + (dword)seedData[3];
+        for (i = 0; i < 40; i++) // fou 语句循环，i<40，循环执行下面逻辑，i>=40,跳出循环
+        {
+            if (dwordTemp & 0x80000000) // if 语句，若表达式语句为真，执行下面逻辑
+            {
+                dwordTemp = dwordTemp << 1;
+                dwordTemp = dwordTemp ^ mask;
+            }
+            else // 若表达式为假，执行下面逻辑
+            {
+                dwordTemp = dwordTemp << 1;
+            }
+        }
+        for (i = 0; i < 4; i++) // fou 语句循环，i<4，循环执行下面逻辑，i>=4，跳出循环
+        {
+            keyData[i] = ReverseByte((byte)((dwordTemp >> (8*i)) & (0xFF))); // 字节和位替换
+        }
+    }
+    return 1; // 返回真实值
+}
+
+byte ReverseByte(byte input)
+{
+  byte output;
+  byte i;
+  output = 0;
+  for(i=0; i<8; i++)
+  {
+    output = (output << 1);
+    if(input & 0x01)
+       output += 1;    
+    input = input >> 1; 
+  }
+    return output;
+}
+
+void DwordToBytes(dword input, byte output[])
+{
+  int i;
+  for(i=0;i<4;i++)
+  {
+    output[i] = (byte)((input >> (8 *(3-i))) & 0xFF);
+  }
+}
+
+dword BytesToDword(byte bytes[])
+{
+    return ((dword)bytes[0] << 24) + ((dword)bytes[1] << 16) + ((dword)bytes[2] << 8) + (dword)bytes[3];
+}

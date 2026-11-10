@@ -1,0 +1,1417 @@
+﻿/*@!Encoding:65001*/
+includes
+{
+  
+}
+
+variables
+{
+  //以下用于控制报文自定义时间丢失的作用，默认为5000ms
+  //建议命名方式为message名 + ID 
+  msTimer ONEBOX_1_0x98;
+  msTimer ACU_2_0x31;
+  msTimer ACU_3_0x021;
+  msTimer FLZCU_1_0x23B;
+  msTimer FLZCU_9_0x49D;
+  msTimer FRZCU_1_0x2AB;
+  msTimer ICC_COM_8_0x510;
+  msTimer ICC_DA_15_0x485;
+  msTimer ONEBOX_3_0x22B;
+  msTimer ONEBOX_4_0x24B;
+  msTimer RZCU_2_0x2BB;
+  msTimer SAS_1_0x132;
+  msTimer TMS_1_0x494;
+  msTimer VCU_2_G_0x4B9;
+  msTimer VCU_COM_10_0x38;
+  msTimer VCU_ONEBOX_11_0x3B;
+  msTimer RRCR_2_0x4F7;
+  msTimer ONEBOX_3_G_0x4AD;
+  msTimer VCC_3_0x470;
+  msTimer Gettime;
+  dword gc_dwCRC16InitValue = 0xFFFF;         
+  long tm[9];
+  int gCounterFaultONEBOX1RC1;
+  int gCounterFaultONEBOX3RC1;
+  int gCounterFaultSAS1;
+  int gCounterFaultACU2;
+  int gCounterFaultACU3;
+  int gCounterFaultFLZCU1;
+  int gCounterFaultFRZCU1;
+  int gCounterFaultRZCU2;
+  int gCounterFaultRRCR2;
+  int gCrcFaultCycleCounter[20];
+  int gMessageFaultInjectionDisabled[16];
+  const int kMessageFaultONEBOX1 = 0;
+  const int kMessageFaultACU2 = 1;
+  const int kMessageFaultACU3 = 2;
+  const int kMessageFaultFLZCU1 = 3;
+  const int kMessageFaultFLZCU9 = 4;
+  const int kMessageFaultFRZCU1 = 5;
+  const int kMessageFaultRZCU2 = 6;
+  const int kMessageFaultICC_COM8 = 7;
+  const int kMessageFaultONEBOX3 = 8;
+  const int kMessageFaultONEBOX4 = 9;
+  const int kMessageFaultSAS1 = 10;
+  const int kMessageFaultTMS1 = 11;
+  const int kMessageFaultVCU2_G = 12;
+  const int kMessageFaultVCU_COM10 = 13;
+  const int kMessageFaultVCU_ONEBOX11 = 14;
+  const int kMessageFaultRRCR2 = 15;
+  
+}
+
+// Repeated MSG writes must not restart an already-enabled cyclic sender.
+void SetMessageFaultInjectionState(int messageSource, int disabled)
+{
+  if((messageSource < 0) || (messageSource >= elcount(gMessageFaultInjectionDisabled)) ||
+     (gMessageFaultInjectionDisabled[messageSource] == disabled))
+    return;
+
+  switch(messageSource)
+  {
+    case kMessageFaultONEBOX1:
+      if(disabled) ILFaultInjectionDisableMsg(ONEBOX_1);
+      else ILFaultInjectionEnableMsg(ONEBOX_1);
+      break;
+    case kMessageFaultACU2:
+      if(disabled) ILFaultInjectionDisableMsg(ACU_2);
+      else ILFaultInjectionEnableMsg(ACU_2);
+      break;
+    case kMessageFaultACU3:
+      if(disabled) ILFaultInjectionDisableMsg(ACU_3);
+      else ILFaultInjectionEnableMsg(ACU_3);
+      break;
+    case kMessageFaultFLZCU1:
+      if(disabled) ILFaultInjectionDisableMsg(FLZCU_1);
+      else ILFaultInjectionEnableMsg(FLZCU_1);
+      break;
+    case kMessageFaultFLZCU9:
+      if(disabled) ILFaultInjectionDisableMsg(FLZCU_9);
+      else ILFaultInjectionEnableMsg(FLZCU_9);
+      break;
+    case kMessageFaultFRZCU1:
+      if(disabled) ILFaultInjectionDisableMsg(FRZCU_1);
+      else ILFaultInjectionEnableMsg(FRZCU_1);
+      break;
+    case kMessageFaultRZCU2:
+      if(disabled) ILFaultInjectionDisableMsg(RZCU_2);
+      else ILFaultInjectionEnableMsg(RZCU_2);
+      break;
+    case kMessageFaultICC_COM8:
+      if(disabled) ILFaultInjectionDisableMsg(ICC_COM_8);
+      else ILFaultInjectionEnableMsg(ICC_COM_8);
+      break;
+    case kMessageFaultONEBOX3:
+      if(disabled) ILFaultInjectionDisableMsg(ONEBOX_3);
+      else ILFaultInjectionEnableMsg(ONEBOX_3);
+      break;
+    case kMessageFaultONEBOX4:
+      if(disabled) ILFaultInjectionDisableMsg(ONEBOX_4);
+      else ILFaultInjectionEnableMsg(ONEBOX_4);
+      break;
+    case kMessageFaultSAS1:
+      if(disabled) ILFaultInjectionDisableMsg(SAS_1);
+      else ILFaultInjectionEnableMsg(SAS_1);
+      break;
+    case kMessageFaultTMS1:
+      if(disabled) ILFaultInjectionDisableMsg(TMS_1);
+      else ILFaultInjectionEnableMsg(TMS_1);
+      break;
+    case kMessageFaultVCU2_G:
+      if(disabled) ILFaultInjectionDisableMsg(VCU_2_G);
+      else ILFaultInjectionEnableMsg(VCU_2_G);
+      break;
+    case kMessageFaultVCU_COM10:
+      if(disabled) ILFaultInjectionDisableMsg(VCU_COM_10);
+      else ILFaultInjectionEnableMsg(VCU_COM_10);
+      break;
+    case kMessageFaultVCU_ONEBOX11:
+      if(disabled) ILFaultInjectionDisableMsg(VCU_ONEBOX_11);
+      else ILFaultInjectionEnableMsg(VCU_ONEBOX_11);
+      break;
+    case kMessageFaultRRCR2:
+      if(disabled) ILFaultInjectionDisableMsg(RRCR_2);
+      else ILFaultInjectionEnableMsg(RRCR_2);
+      break;
+  }
+
+  gMessageFaultInjectionDisabled[messageSource] = disabled;
+}
+
+// CRC偏移非零时，按配置的帧数发送故障；达到阈值后下一帧恢复正常CRC。
+int CompleteCrcFaultCycle(int crcOffset, int crcSource)
+{
+  if((crcOffset == 0) ||
+     (@sysvar::Vehicle_input::Message_CRC::CRC_unchange <= 0))
+  {
+    gCrcFaultCycleCounter[crcSource] = 0;
+    return 0;
+  }
+
+  gCrcFaultCycleCounter[crcSource]++;
+  if(gCrcFaultCycleCounter[crcSource] >=
+     @sysvar::Vehicle_input::Message_CRC::CRC_unchange)
+  {
+    gCrcFaultCycleCounter[crcSource] = 0;
+    return 1;
+  }
+
+  return 0;
+}
+
+
+on timer Gettime{
+  InitReportAndLog();
+}
+
+//在函数内部完成所有操作
+void InitReportAndLog()
+{
+  long tm[9];
+  getLocalTime(tm);
+  //正确赋值到变量（确保时间在合理范围）
+  $CAN1::CGW::ICC_COM_8::CurrentTimeYear = tm[5]+1900; // 年（如2025）
+  $CAN1::CGW::ICC_COM_8::CurrentTimeMonth = tm[4]+1; // 月（1-12）
+  $CAN1::CGW::ICC_COM_8::CurrentTimeDay = tm[3];    // 日（1-31）
+  $CAN1::CGW::ICC_COM_8::CurrentTimeHour = tm[2];   // 时（0-23）
+  $CAN1::CGW::ICC_COM_8::CurrentTimeMinute = tm[1]; // 分（0-59）
+  $CAN1::CGW::ICC_COM_8::CurrentTimeSecond = tm[0]; // 秒（0-59） 
+  setTimer(Gettime,1000);
+  //write("%d_%02d_%02d_%02d_%02d_%02d",tm[5]+1900,tm[4]+1,tm[3],tm[2],tm[1],tm[0]);
+  
+}
+
+
+
+
+on Start
+{
+  InitReportAndLog();
+//  $CAN1::CGW::FLZCU_9::FLZCU_9_PowerMode=2;
+  $CAN1::CGW::SAS_1::SAM_1_SteeringAngle=0;
+  $CAN1::CGW::ACU_2::ACU_2_YawRate=0;
+  $CAN1::CGW::TMS_1::ExternalTemperature_C=20;
+  
+}
+
+//on key 'p'
+//{
+//  // Set both fields before the next cyclic 0x49D transmission.
+//  $CAN1::CGW::FLZCU_9::FLZCU_9_PowerMode = 0;
+//  $CAN1::CGW::FLZCU_9::FLZCU_9_ArmingSts = 1;
+//}
+//
+//on key 'q'
+//{
+//  // Set both fields before the next cyclic 0x49D transmission.
+//  $CAN1::CGW::FLZCU_9::FLZCU_9_PowerMode = 2;
+//  $CAN1::CGW::FLZCU_9::FLZCU_9_ArmingSts = 0;
+//}
+
+on timer ACU_2_0x31
+{
+  @sysvar::Vehicle_input::MSG::ACU_2_0x31 = 0;
+}
+
+on timer ACU_3_0x021
+{
+  @sysvar::Vehicle_input::MSG::ACU_3_0x021 = 0;
+}
+
+on timer FLZCU_1_0x23B
+{
+  @sysvar::Vehicle_input::MSG::FLZCU_1_0x23B = 0;
+}
+
+on timer FLZCU_9_0x49D
+{
+  @sysvar::Vehicle_input::MSG::FLZCU_9_0x49D = 0;
+}
+
+on timer FRZCU_1_0x2AB
+{
+  @sysvar::Vehicle_input::MSG::FRZCU_1_0x2AB = 0;
+}
+
+on timer RZCU_2_0x2BB
+{
+  @sysvar::Vehicle_input::MSG::RZCU_2_0x2BB = 0;
+}
+
+on timer ICC_COM_8_0x510
+{
+  @sysvar::Vehicle_input::MSG::ICC_COM_8_0x510 = 0;
+}
+
+on timer ICC_DA_15_0x485
+{
+  @sysvar::Vehicle_input::MSG::ICC_DA_15_0x485 = 0;
+}
+
+on timer ONEBOX_1_0x98
+{
+  @sysvar::Vehicle_input::MSG::ONEBOX_1_0x98 = 0;
+}
+
+on timer ONEBOX_3_0x22B
+{
+  @sysvar::Vehicle_input::MSG::ONEBOX_3_0x22B = 0;
+}
+
+on timer ONEBOX_4_0x24B
+{
+  @sysvar::Vehicle_input::MSG::ONEBOX_4_0x24B = 0;
+}
+
+on timer SAS_1_0x132
+{
+  @sysvar::Vehicle_input::MSG::SAS_1_0x132 = 0;
+}
+
+on timer TMS_1_0x494
+{
+  @sysvar::Vehicle_input::MSG::TMS_1_0x494 = 0;
+}
+
+on timer VCU_2_G_0x4B9
+{
+  @sysvar::Vehicle_input::MSG::VCU_2_G_0x4B9 = 0;
+}
+
+on timer VCU_COM_10_0x38
+{
+  @sysvar::Vehicle_input::MSG::VCU_COM_10_0x38 = 0;
+}
+
+on timer VCU_ONEBOX_11_0x3B
+{
+  @sysvar::Vehicle_input::MSG::VCU_ONEBOX_11_0x3B = 0;
+}
+
+on timer ONEBOX_3_G_0x4AD
+{
+  @sysvar::Vehicle_input::MSG::ONEBOX_3_G_0x4AD = 0;
+}
+
+on timer VCC_3_0x470
+{
+  @sysvar::Vehicle_input::MSG::VCC_3_0x470 = 0;
+}
+
+on timer RRCR_2_0x4F7
+{
+  @sysvar::Vehicle_input::MSG::RRCR_2_0x4F7 = 0;
+}
+
+
+////以下是节点控制报文
+on sysvar_update sysvar::Vehicle_input::Node::CGW
+{
+  long node;
+  if (@this == 1)
+  {
+    node = ILControlStop();//停止发送该节点报文
+  }
+  else
+  {
+    node = ILControlStart();//开始发送该节点报文
+  }
+}
+
+
+on sysvar_update sysvar::Vehicle_input::MSG::RRCR_2_0x4F7
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultRRCR2, 1);
+    setTimer(RRCR_2_0x4F7,@sysvar::Vehicle_input::Message_MissingTime::RRCR_2_0x4F7);
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultRRCR2, 0);
+  } 
+}
+
+
+on sysvar_update sysvar::Vehicle_input::MSG::ACU_2_0x31
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultACU2, 1);
+    setTimer(ACU_2_0x31,@sysvar::Vehicle_input::Message_MissingTime::ACU_2_0x31);
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultACU2, 0);
+  } 
+}
+
+on sysvar_update sysvar::Vehicle_input::MSG::ACU_3_0x021
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultACU3, 1);
+    setTimer(ACU_3_0x021,@sysvar::Vehicle_input::Message_MissingTime::ACU_3_0x021 );
+  }
+  else
+  { 
+    SetMessageFaultInjectionState(kMessageFaultACU3, 0);
+  } 
+}
+
+on sysvar_update sysvar::Vehicle_input::MSG::FLZCU_1_0x23B
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultFLZCU1, 1);
+    setTimer(FLZCU_1_0x23B,@sysvar::Vehicle_input::Message_MissingTime::FLZCU_1_0x23B );
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultFLZCU1, 0);
+  }
+}
+
+on sysvar_update sysvar::Vehicle_input::MSG::FLZCU_9_0x49D
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultFLZCU9, 1);
+    setTimer(FLZCU_9_0x49D,@sysvar::Vehicle_input::Message_MissingTime::FLZCU_9_0x49D );
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultFLZCU9, 0);
+  }
+}
+
+on sysvar_update sysvar::Vehicle_input::MSG::FRZCU_1_0x2AB
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultFRZCU1, 1);
+    setTimer(FRZCU_1_0x2AB,@sysvar::Vehicle_input::Message_MissingTime::FRZCU_1_0x2AB );
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultFRZCU1, 0);
+  } 
+}
+
+on sysvar_update sysvar::Vehicle_input::MSG::RZCU_2_0x2BB
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultRZCU2, 1);
+    setTimer(RZCU_2_0x2BB,@sysvar::Vehicle_input::Message_MissingTime::RZCU_2_0x2BB );
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultRZCU2, 0);
+  } 
+}
+
+on sysvar_update sysvar::Vehicle_input::MSG::ICC_COM_8_0x510
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultICC_COM8, 1);
+    setTimer(ICC_COM_8_0x510,@sysvar::Vehicle_input::Message_MissingTime::ICC_COM_8_0x510 );
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultICC_COM8, 0);
+  } 
+}
+
+//on sysvar_update sysvar::Vehicle_input::MSG::ICC_DA_15_0x485
+//{
+//  if(@this == 1)
+//  {
+//    ILFaultInjectionDisableMsg(ICC_DA_15);
+//    setTimer(ICC_DA_15_0x485,@sysvar::Vehicle_input::Message_MissingTime::ICC_DA_15_0x485 );
+//  }
+//  else
+//  {
+//    ILFaultInjectionEnableMsg(ICC_DA_15);
+//  } 
+//}
+
+on sysvar_update sysvar::Vehicle_input::MSG::ONEBOX_1_0x98
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultONEBOX1, 1);
+    setTimer(ONEBOX_1_0x98,@sysvar::Vehicle_input::Message_MissingTime::ONEBOX_1_0x98 );
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultONEBOX1, 0);
+  } 
+}
+
+on sysvar_update sysvar::Vehicle_input::MSG::ONEBOX_3_0x22B
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultONEBOX3, 1);
+    setTimer(ONEBOX_3_0x22B,@sysvar::Vehicle_input::Message_MissingTime::ONEBOX_3_0x22B );
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultONEBOX3, 0);
+  } 
+}
+
+on sysvar_update sysvar::Vehicle_input::MSG::ONEBOX_4_0x24B
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultONEBOX4, 1);
+    setTimer(ONEBOX_4_0x24B,@sysvar::Vehicle_input::Message_MissingTime::ONEBOX_4_0x24B );
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultONEBOX4, 0);
+  }  
+}
+
+on sysvar_update sysvar::Vehicle_input::MSG::SAS_1_0x132
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultSAS1, 1);
+    setTimer(SAS_1_0x132,@sysvar::Vehicle_input::Message_MissingTime::SAS_1_0x132 );
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultSAS1, 0);
+  } 
+}
+
+on sysvar_update sysvar::Vehicle_input::MSG::TMS_1_0x494
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultTMS1, 1);
+    setTimer(TMS_1_0x494,@sysvar::Vehicle_input::Message_MissingTime::TMS_1_0x494 );
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultTMS1, 0);
+  }
+}
+
+on sysvar_update sysvar::Vehicle_input::MSG::VCU_2_G_0x4B9
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultVCU2_G, 1);
+    setTimer(VCU_2_G_0x4B9,@sysvar::Vehicle_input::Message_MissingTime::VCU_2_G_0x4B9 );
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultVCU2_G, 0);
+  } 
+}
+
+on sysvar_update sysvar::Vehicle_input::MSG::VCU_COM_10_0x38
+{ 
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultVCU_COM10, 1);
+    setTimer(VCU_COM_10_0x38,@sysvar::Vehicle_input::Message_MissingTime::VCU_COM_10_0x38 );
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultVCU_COM10, 0);
+  } 
+}
+
+on sysvar_update sysvar::Vehicle_input::MSG::VCU_ONEBOX_11_0x3B
+{
+  if(@this == 1)
+  {
+    SetMessageFaultInjectionState(kMessageFaultVCU_ONEBOX11, 1);
+    setTimer(VCU_ONEBOX_11_0x3B,@sysvar::Vehicle_input::Message_MissingTime::VCU_ONEBOX_11_0x3B );
+  }
+  else
+  {
+    SetMessageFaultInjectionState(kMessageFaultVCU_ONEBOX11, 0);
+  } 
+}
+
+
+
+//以下部分实现counter 进行0~14的累加
+
+byte E2E_Counter(byte data[],byte c_pos)
+{
+    int Counter;       
+    Counter = data[c_pos] & 0x0F;
+    Counter++;
+    if(Counter > 14)
+      Counter = Counter - 15;
+    Counter = (data[c_pos] & 0xF0)+ Counter;
+    return  Counter;
+}
+
+//奇瑞 Checksum 算法
+byte E2E_CRC8(byte buffer[], byte length)
+{ 
+  byte checksum,i,j;
+  byte CRC8_Poly = 0x1D;
+  checksum = 0x00;
+  CRC8_Poly = 0x1D;
+  for(i=0; i<length; i++)
+  {
+    checksum = checksum ^ buffer[i];
+    for( j=0; j<8; j++ )
+    {
+      if(checksum & 0x80)
+      {
+        checksum = ((checksum << 1) ^ CRC8_Poly); 
+      }
+      else
+      {
+        checksum = (checksum << 1);
+      }
+    }
+  }
+  checksum = checksum ^ 0x00;
+  return checksum;
+}
+
+word ssh_crc16_cheery(byte buffer[], byte length)
+{
+  word wCRCin;
+  word wCPoly=0x1021;
+  dword i,j;
+  byte wChar = 0; 
+  j=0;
+  wCRCin=gc_dwCRC16InitValue;
+  
+  while(length--) 
+  {
+    wChar =buffer[j++]; 
+    wCRCin ^= (wChar << 8); 
+    for(i = 0; i < 8; i++) 
+    { 
+      if(wCRCin & 0x8000) 
+      { 
+        wCRCin = (wCRCin << 1) ^ wCPoly; 
+      } 
+      else 
+      { 
+        wCRCin = wCRCin << 1; 
+      } 
+    } 
+  }
+  wCRCin=wCRCin ^ 0x0000;
+  return wCRCin;
+}
+
+//以下代码是检查雷达外发的CRC是否正确
+on message RLCR_1
+{
+  int i;
+  byte MSG_RawData[64];
+  MSG_RawData[0]=0x44;
+  MSG_RawData[1]=0x00;
+  for (i = 0; i < 8; i++)
+  {
+    MSG_RawData[i+2] = this.byte(i+1);   
+  }
+  @sysvar::Vehicle_input::Message_CRC::RLCR_1_0x447 = E2E_CRC8(MSG_RawData,9);
+  if (this.byte(0) == (@sysvar::Vehicle_input::Message_CRC::RLCR_1_0x447))
+  {
+    @sysvar::Vehicle_input::MSG::RLCR_1_0x447 = 1;
+  }
+  else 
+  {
+    @sysvar::Vehicle_input::MSG::RLCR_1_0x447 = 0;
+  }
+}
+
+on message RLCR_2
+{
+  int i;
+  byte MSG_RawData[64];
+  MSG_RawData[0]=0x45;
+  MSG_RawData[1]=0x00;
+  for (i = 0; i < 8; i++)
+  {
+    MSG_RawData[i+2] = this.byte(i+1);   
+  }
+  @sysvar::Vehicle_input::Message_CRC::RLCR_2_0x450 = E2E_CRC8(MSG_RawData,9);
+  if (this.byte(0) == (@sysvar::Vehicle_input::Message_CRC::RLCR_2_0x450))
+  {
+    @sysvar::Vehicle_input::MSG::RLCR_2_0x450 = 1;
+  }
+  else 
+  {
+    @sysvar::Vehicle_input::MSG::RLCR_2_0x450 = 0;
+  }
+}
+
+//on message RLCR_3
+//{
+//  int i;
+//  byte MSG_RawData[64];
+//  MSG_RawData[22]=0xA7;
+//  MSG_RawData[23]=0x03;
+//  for (i = 0; i < 22; i++)
+//  {
+//    MSG_RawData[i] = this.byte(i+2);   
+//
+//  }
+//  @sysvar::Vehicle_input::Message_CRC::RLCR_3_0x3A7 = ssh_crc16_cheery(MSG_RawData,24);
+//  if ((this.byte(0)<<8 | this.byte(1))== (@sysvar::Vehicle_input::Message_CRC::RLCR_3_0x3A7))
+//  {
+//    @sysvar::Vehicle_input::MSG::RLCR_3_0x3A7 = 1;
+//  }
+//  else 
+//  {
+//    @sysvar::Vehicle_input::MSG::RLCR_3_0x3A7 = 0;
+//  }
+//}
+
+
+on message RRCR_1
+{
+  int i;
+  byte MSG_RawData[64];
+  MSG_RawData[0]=0x46;
+  MSG_RawData[1]=0x00;
+  for (i = 0; i < 8; i++)
+  {
+    MSG_RawData[i+2] = this.byte(i+1);   
+  }
+  @sysvar::Vehicle_input::Message_CRC::RRCR_1_0x4F3 = E2E_CRC8(MSG_RawData,9);
+  if (this.byte(0) == (@sysvar::Vehicle_input::Message_CRC::RRCR_1_0x4F3))
+  {
+  @sysvar::Vehicle_input::MSG::RRCR_1_0x4F3 = 1;
+  }
+  else 
+  {
+    @sysvar::Vehicle_input::MSG::RRCR_1_0x4F3 = 0;
+  }
+}
+
+
+
+//on message RRCR_2
+//{
+//  int i;
+//  byte MSG_RawData[64];
+//  MSG_RawData[0]=0x47;
+//  MSG_RawData[1]=0x00;
+//  for (i = 0; i < 8; i++)
+//  {
+//    MSG_RawData[i+2] = this.byte(i+1);   
+//  }
+//  @sysvar::Vehicle_input::Message_CRC::RRCR_2_0x4F7 = E2E_CRC8(MSG_RawData,9);
+//  if (this.byte(0) == (@sysvar::Vehicle_input::Message_CRC::RRCR_2_0x4F7))
+//  {
+//    @sysvar::Vehicle_input::MSG::RRCR_2_0x4F7 = 1;
+//  }
+//  else 
+//  {
+//    @sysvar::Vehicle_input::MSG::RRCR_2_0x4F7 = 0;
+//  }
+//}
+
+
+
+
+
+//Calculation of a checksum and a message counter 示例:
+dword applILTxPending (long aId, dword aDlc, byte data[]) // 在CANoe交互层（CANoe IL）向总线发送消息之前，调用此回调。
+{
+  dword i;
+  byte MSG_Data[64];  //存储报文
+  byte result_crc;
+  
+  //0x098 ONEBOX_1
+  if(aId == 0x98)  //写 message ID
+  {
+    if(@ sysvar::Vehicle_input::Message_Counter::ONEBOX_1_0x98_RC1 ==1)
+    {
+      gCounterFaultONEBOX1RC1++;
+      if(gCounterFaultONEBOX1RC1 >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @ sysvar::Vehicle_input::Message_Counter::ONEBOX_1_0x98_RC1 = 0;
+        gCounterFaultONEBOX1RC1 = 0;
+      }
+    }
+    else
+    {
+      gCounterFaultONEBOX1RC1 = 0;
+      data[1] = E2E_Counter(data,1);
+      //set the new checksum
+      MSG_Data[0] = 0x49; // 将CANID 添加进待校验的数组  
+      MSG_Data[1] = 0x00;
+      for(i = 1; i < 7; i++)
+      {
+        MSG_Data[i+1] = data[i];  // 将前7个Byte添加进待校验的数组 
+      }
+      data[0]  = E2E_CRC8(MSG_Data, 9) + @sysvar::Vehicle_input::Message_CRC::ONEBOX_1_0x98_CRC1;  // 要校验的数据为 DataID + CRC外的7个Byte 
+      if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::ONEBOX_1_0x98_CRC1, 0))
+      {
+        @sysvar::Vehicle_input::Message_CRC::ONEBOX_1_0x98_CRC1 = 0;
+      }
+    }
+    if(@ sysvar::Vehicle_input::Message_Counter::ONEBOX_1_0x98_RC2 ==1)
+    {
+      int current_counter;
+      current_counter++;
+      //write("the current counter is %d",current_counter);
+      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @ sysvar::Vehicle_input::Message_Counter::ONEBOX_1_0x98_RC2 = 0;
+        current_counter = 0;
+      }
+    }
+    else
+    {
+      data[9] = E2E_Counter(data,9);
+      MSG_Data[0] = 0x4A;
+      MSG_Data[1] = 0x00;
+      for(i = 1; i < 7; i++)
+      {
+        MSG_Data[i+1] = data[i+8];
+      }
+      data[8]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::ONEBOX_1_0x98_CRC2;
+      if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::ONEBOX_1_0x98_CRC2, 1))
+      {
+        @sysvar::Vehicle_input::Message_CRC::ONEBOX_1_0x98_CRC2 = 0;
+      }
+    }
+  }
+  
+  //0x22B ONEBOX_3
+  if(aId == 0x22B)
+  {
+    if(@sysvar::Vehicle_input::Message_Counter::ONEBOX_3_0x22B_RC1 ==1)
+    {
+      gCounterFaultONEBOX3RC1++;
+      if(gCounterFaultONEBOX3RC1 >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::ONEBOX_3_0x22B_RC1 = 0;
+        gCounterFaultONEBOX3RC1 = 0;
+      }
+    }
+    else
+    {
+      gCounterFaultONEBOX3RC1 = 0;
+      data[1] = E2E_Counter(data,1);
+      MSG_Data[0] = 0x4D;
+      MSG_Data[1] = 0x00;
+      for(i = 1; i < 7; i++)
+      {
+        MSG_Data[i+1] = data[i]; 
+      }
+      data[0]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC1;
+      if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC1, 2))
+      {
+        @sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC1 = 0;
+      }
+    }
+    if(@sysvar::Vehicle_input::Message_Counter::ONEBOX_3_0x22B_RC2 ==1)
+    {
+      int current_counter;
+      current_counter++;
+      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::ONEBOX_3_0x22B_RC2 = 0;
+        current_counter = 0;
+      }
+    }
+    else
+    {
+      data[9] = E2E_Counter(data,9);
+      MSG_Data[0] = 0x4E;
+      MSG_Data[1] = 0x00;
+      for(i = 1; i < 7; i++)
+      {
+        MSG_Data[i+1] = data[i+8]; 
+      }
+      data[8]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC2;
+      if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC2, 3))
+      {
+        @sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC2 = 0;
+      }
+    }
+    if(@sysvar::Vehicle_input::Message_Counter::ONEBOX_3_0x22B_RC4 ==1)
+    {
+      int current_counter;
+      current_counter++;
+      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::ONEBOX_3_0x22B_RC4 = 0;
+        current_counter = 0;
+      }
+    }
+    else
+    {
+      data[25] = E2E_Counter(data,25);
+      MSG_Data[0] = 0x50;
+      MSG_Data[1] = 0x00;
+      for(i = 1; i < 7; i++)
+      {
+        MSG_Data[i+1] = data[i+24]; 
+      }
+      data[24]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC4;
+      if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC4, 4))
+      {
+        @sysvar::Vehicle_input::Message_CRC::ONEBOX_3_0x22B_CRC4 = 0;
+      }
+    }
+  }
+  //TCU_COM_126h
+   if(aId == 0x126)
+  {
+    if(@sysvar::Vehicle_input::Message_Counter::TCU_COM_126h_0x126==1)
+    {
+      int current_counter;
+      current_counter++;
+      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::TCU_COM_126h_0x126 = 0;
+        current_counter = 0;
+      }
+    }
+    else
+    {
+    data[1] = E2E_Counter(data,1);
+    MSG_Data[0] = 0x0A;
+    MSG_Data[1] = 0x01;
+    for(i = 1; i < 23; i++)
+    {
+      MSG_Data[i+1] = data[i];
+    }
+    data[0]  = E2E_CRC8(MSG_Data,25) + @sysvar::Vehicle_input::Message_CRC::TCU_COM_126h_0x126;
+    if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::TCU_COM_126h_0x126, 5))
+    {
+      @sysvar::Vehicle_input::Message_CRC::TCU_COM_126h_0x126 = 0;
+    }
+    }
+  } 
+  
+  
+  if(aId == 0x24B)
+  {
+    if(@sysvar::Vehicle_input::Message_Counter::ONEBOX_4_0x24B_RC1 ==1)
+    {
+      int current_counter;
+      current_counter++;
+      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::ONEBOX_4_0x24B_RC1 = 0;
+        current_counter = 0;
+      }
+    }
+    else
+    {
+      data[1] = E2E_Counter(data,1);
+      MSG_Data[0] = 0x51;
+      MSG_Data[1] = 0x00;
+      for(i = 1; i < 7; i++)
+      {
+        MSG_Data[i+1] = data[i]; 
+      }
+      data[0]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::ONEBOX_4_0x24B_CRC1;
+      if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::ONEBOX_4_0x24B_CRC1, 6))
+      {
+        @sysvar::Vehicle_input::Message_CRC::ONEBOX_4_0x24B_CRC1 = 0;
+      }
+    }
+    if(@sysvar::Vehicle_input::Message_Counter::ONEBOX_4_0x24B_RC2 ==1)
+    {
+      int current_counter;
+      current_counter++;
+      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::ONEBOX_4_0x24B_RC2 = 0;
+        current_counter = 0;
+      }
+    }
+    else
+    {
+      data[9] = E2E_Counter(data,9);
+      MSG_Data[0] = 0x52;
+      MSG_Data[1] = 0x00;
+      for(i = 1; i < 7; i++)
+      {
+        MSG_Data[i+1] = data[i+8]; 
+      }
+      data[8]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::ONEBOX_4_0x24B_CRC2;
+      if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::ONEBOX_4_0x24B_CRC2, 7))
+      {
+        @sysvar::Vehicle_input::Message_CRC::ONEBOX_4_0x24B_CRC2 = 0;
+      }
+    }
+    if(@sysvar::Vehicle_input::Message_Counter::ONEBOX_4_0x24B_RC3 ==1)
+    {
+      int current_counter;
+      current_counter++;
+      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::ONEBOX_4_0x24B_RC3 = 0;
+        current_counter = 0;
+      }
+    }
+    else
+    {
+      data[17] = E2E_Counter(data,17);
+      MSG_Data[0] = 0x53;
+      MSG_Data[1] = 0x00;
+      for(i = 1; i < 7; i++)
+      {
+        MSG_Data[i+1] = data[i+16]; 
+      }
+      data[16]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::ONEBOX_4_0x24B_CRC3;
+      if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::ONEBOX_4_0x24B_CRC3, 8))
+      {
+        @sysvar::Vehicle_input::Message_CRC::ONEBOX_4_0x24B_CRC3 = 0;
+      }
+    }
+     if(@sysvar::Vehicle_input::Message_Counter::ONEBOX_4_0x24B_RC4 ==1)
+    {
+      int current_counter;
+      current_counter++;
+      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::ONEBOX_4_0x24B_RC4 = 0;
+        current_counter = 0;
+      }
+    }
+    else
+    {
+      data[25] = E2E_Counter(data,25);
+      MSG_Data[0] = 0x54;
+      MSG_Data[1] = 0x00;
+      for(i = 1; i < 7; i++)
+      {
+        MSG_Data[i+1] = data[i+24]; 
+      }
+      data[24]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::ONEBOX_4_0x24B_CRC4;
+      if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::ONEBOX_4_0x24B_CRC4, 9))
+      {
+        @sysvar::Vehicle_input::Message_CRC::ONEBOX_4_0x24B_CRC4 = 0;
+      }
+    }
+  }
+  
+  //0x132 SAS_1
+  if(aId == 0x132)
+  {
+    if(@ sysvar::Vehicle_input::Message_Counter::SAS_1_0x132)
+    {
+      gCounterFaultSAS1++;
+      if(gCounterFaultSAS1 >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::SAS_1_0x132 = 0;
+        gCounterFaultSAS1 = 0;
+      }
+    }
+    else
+    {
+    gCounterFaultSAS1 = 0;
+    data[1] = E2E_Counter(data,1);
+    MSG_Data[0] = 0x35;
+    MSG_Data[1] = 0x00;
+    for(i = 1; i < 7; i++)
+    {
+      MSG_Data[i+1] = data[i]; 
+    }
+    data[0]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::SAS_1_0x132;
+    if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::SAS_1_0x132, 10))
+    {
+      @sysvar::Vehicle_input::Message_CRC::SAS_1_0x132 = 0;
+    }
+    }
+  }
+  
+  //0x470 VCC_3
+//  if (@sysvar::Vehicle_input::Node::VCC_3_SN == 0)
+//  {
+//  if(aId == 0x470)
+//  { 
+//    $CAN1::CGW::VCC_3::VCC_3_SN = 1; 
+//    if(@ sysvar::Vehicle_input::Message_Counter::VCC_3_0x470 == 1)
+//    {
+//      int current_counter;
+//      current_counter++;
+//      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+//      {
+//        @sysvar::Vehicle_input::Message_Counter::VCC_3_0x470 = 0;
+//        current_counter = 0;
+//      }
+//    }
+//    else
+//    {
+//    data[1] = E2E_Counter(data,1);
+//    MSG_Data[0] = 0x70;
+//    MSG_Data[1] = 0x00;
+//    for(i = 1; i < 7; i++)
+//    {
+//      MSG_Data[i+1] = data[i]; 
+//    }
+//    data[0]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::VCC_3_0x470;
+//    }
+//  }
+// }
+// if (@sysvar::Vehicle_input::Node::VCC_3_SN == 1){
+//    $CAN1::CGW::VCC_3::VCC_3_SN = 0;
+//    ILFaultInjectionDisableMsg(VCC_3);
+//  }
+  //ACU_3
+  if(aId == 0x21)
+  {
+    if(@sysvar::Vehicle_input::Message_Counter::ACU_3_0x021 ==1)
+    {
+      gCounterFaultACU3++;
+      if(gCounterFaultACU3 >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::ACU_3_0x021 = 0;
+        gCounterFaultACU3 = 0;
+      }
+    }
+    else
+    {
+    gCounterFaultACU3 = 0;
+    data[1] = E2E_Counter(data,1);
+    MSG_Data[0] = 0x02;
+    MSG_Data[1] = 0x00;
+    for(i = 1; i < 7; i++)
+    {
+      MSG_Data[i+1] = data[i];
+    }
+    data[0]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::ACU_3_0x021 ;
+    if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::ACU_3_0x021, 11))
+    {
+      @sysvar::Vehicle_input::Message_CRC::ACU_3_0x021 = 0;
+    }
+   
+    }
+  }
+  
+  //ACU_2
+  if(aId == 0x31)
+  {
+    if(@sysvar::Vehicle_input::Message_Counter::ACU_2_0x31 ==1)
+    {
+      gCounterFaultACU2++;
+      if(gCounterFaultACU2 >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::ACU_2_0x31 = 0;
+        gCounterFaultACU2 = 0;
+      }
+    }
+    else
+    {
+    gCounterFaultACU2 = 0;
+    data[1] = E2E_Counter(data,1);
+    MSG_Data[0] = 0x01;
+    MSG_Data[1] = 0x00;
+    for(i = 1; i < 7; i++)
+    {
+      MSG_Data[i+1] = data[i];
+    }
+    data[0]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::ACU_2_0x31 ;
+    if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::ACU_2_0x31, 12))
+    {
+      @sysvar::Vehicle_input::Message_CRC::ACU_2_0x31 = 0;
+    }
+    }
+  }
+  //FLZCU_3
+  if(aId == 0x460)
+  {
+    if(@sysvar::Vehicle_input::Message_Counter::FLZCU_3_0x460==1)
+    {
+      int current_counter;
+      current_counter++;
+      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::FLZCU_3_0x460 = 0;
+        current_counter = 0;
+      }
+    }
+    else
+    {
+    data[1] = E2E_Counter(data,1);
+    MSG_Data[0] = 0xA4;
+    MSG_Data[1] = 0x00;
+    for(i = 1; i < 7; i++)
+    {
+      MSG_Data[i+1] = data[i];
+    }
+    data[0]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_Counter::FLZCU_3_0x460;
+    }
+  } 
+  //FLZCU_12
+  if(aId == 0x406)
+  {
+    if(@sysvar::Vehicle_input::Message_Counter::FLZCU_12_0x406==1)
+    {
+      int current_counter;
+      current_counter++;
+      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::FLZCU_12_0x406 = 0;
+        current_counter = 0;
+      }
+    }
+    else
+    {
+    data[1] = E2E_Counter(data,1);
+    MSG_Data[0] = 0x9B;
+    MSG_Data[1] = 0x00;
+    for(i = 1; i < 7; i++)
+    {
+      MSG_Data[i+1] = data[i];
+    }
+    data[0]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_Counter::FLZCU_12_0x406;
+    }
+  } 
+  //FLZCU_1
+  if(aId == 0x23B)
+  {
+    if(@sysvar::Vehicle_input::Message_Counter::FLZCU_1_0x23B ==1)
+    {
+      gCounterFaultFLZCU1++;
+      if(gCounterFaultFLZCU1 >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::FLZCU_1_0x23B = 0;
+        gCounterFaultFLZCU1 = 0;
+      }
+    }
+    else
+    {
+    gCounterFaultFLZCU1 = 0;
+    data[1] = E2E_Counter(data,1);
+    MSG_Data[0] = 0x36;
+    //MSG_Data[0] = 0x37;
+    MSG_Data[1] = 0x00;
+    for(i = 1; i < 7; i++)
+    {
+      MSG_Data[i+1] = data[i];
+    }
+    data[0]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::FLZCU_1_0x23B;
+    if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::FLZCU_1_0x23B, 13))
+    {
+      @sysvar::Vehicle_input::Message_CRC::FLZCU_1_0x23B = 0;
+    }
+    }
+  }
+  
+  //FRZCU_1
+  if(aId == 0x2AB)
+  {
+    if(@sysvar::Vehicle_input::Message_Counter::FRZCU_1_0x2AB ==1)
+    {
+      gCounterFaultFRZCU1++;
+      if(gCounterFaultFRZCU1 >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @ sysvar::Vehicle_input::Message_Counter::FRZCU_1_0x2AB= 0;
+        gCounterFaultFRZCU1 = 0;
+      }
+    }
+    else
+    {
+    gCounterFaultFRZCU1 = 0;
+    data[1] = E2E_Counter(data,1);
+    MSG_Data[0] = 0x3A;
+    MSG_Data[1] = 0x00;
+    for(i = 1; i < 7; i++)
+    {
+      MSG_Data[i+1] = data[i];
+    }
+    data[0]  = E2E_CRC8(MSG_Data,9) + @ sysvar::Vehicle_input::Message_CRC::FRZCU_1_0x2AB;
+    if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::FRZCU_1_0x2AB, 14))
+    {
+      @sysvar::Vehicle_input::Message_CRC::FRZCU_1_0x2AB = 0;
+    }
+    }
+  }
+  
+  //RZCU_2
+  if(aId == 0x2BB)
+  {
+    if(@ sysvar::Vehicle_input::Message_Counter::RZCU_2_0x2BB==1)
+    {
+      gCounterFaultRZCU2++;
+      if(gCounterFaultRZCU2 >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @ sysvar::Vehicle_input::Message_Counter::RZCU_2_0x2BB= 0;
+        gCounterFaultRZCU2 = 0;
+      }
+    }
+    else
+    {
+    gCounterFaultRZCU2 = 0;
+    data[1] = E2E_Counter(data,1);
+    MSG_Data[0] = 0x3B;
+    MSG_Data[1] = 0x00;
+    for(i = 1; i < 7; i++)
+    {
+      MSG_Data[i+1] = data[i];
+    }
+    data[0]  = E2E_CRC8(MSG_Data,9) + @ sysvar::Vehicle_input::Message_CRC::RZCU_2_0x2BB;
+    if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::RZCU_2_0x2BB, 15))
+    {
+      @sysvar::Vehicle_input::Message_CRC::RZCU_2_0x2BB = 0;
+    }
+    }
+  }
+  
+  //VCU_2_G
+  if(aId == 0x4B9)
+  {
+    if(@ sysvar::Vehicle_input::Message_Counter::VCU_2_G_0x4B9==1)
+    {
+      int current_counter;
+      current_counter++;
+      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::VCU_2_G_0x4B9 = 0;
+        current_counter = 0;
+      }
+    }
+    else
+    {
+    data[1] = E2E_Counter(data,1);
+    MSG_Data[0] = 0x5D;
+    MSG_Data[1] = 0x00;
+    for(i = 1; i < 7; i++)
+    {
+      MSG_Data[i+1] = data[i];
+    }
+    data[0]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::VCU_2_G_0x4B9 ;
+    if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::VCU_2_G_0x4B9, 16))
+    {
+      @sysvar::Vehicle_input::Message_CRC::VCU_2_G_0x4B9 = 0;
+    }
+    }
+  }  
+  
+  //VCU_COM_10
+  if(aId == 0x038)
+  {
+    if(@sysvar::Vehicle_input::Message_Counter::VCU_COM_10_0x38==1)
+    {
+      int current_counter;
+      current_counter++;
+      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::VCU_COM_10_0x38 = 0;
+        current_counter = 0;
+      }
+    }
+    else
+    {
+    data[1] = E2E_Counter(data,1);
+    MSG_Data[0] = 0x68;
+    MSG_Data[1] = 0x00;
+    for(i = 1; i < 7; i++)
+    {
+      MSG_Data[i+1] = data[i];
+    }
+    data[0]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::VCU_COM_10_0x38;
+    if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::VCU_COM_10_0x38, 17))
+    {
+      @sysvar::Vehicle_input::Message_CRC::VCU_COM_10_0x38 = 0;
+    }
+    }
+  } 
+  
+//RRCR_2_0x4F7
+  if(aId == 0x4F7)
+  {
+    int CRC4F7;
+    if(@sysvar::Vehicle_input::Message_Counter::RRCR_2_0x4F7==1)
+    {
+      gCounterFaultRRCR2++;
+      if(gCounterFaultRRCR2 >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::RRCR_2_0x4F7 = 0;
+        gCounterFaultRRCR2 = 0;
+      }
+    }
+    else
+    {
+    gCounterFaultRRCR2 = 0;
+    data[1] = E2E_Counter(data,1);
+    MSG_Data[0] = 0x47;
+    MSG_Data[1] = 0x00;
+    for(i = 1; i < 7; i++)
+    {
+      MSG_Data[i+1] = data[i];
+    }
+    data[0]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::RRCR_2_0x4F7;
+    if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::RRCR_2_0x4F7, 18))
+    {
+      @sysvar::Vehicle_input::Message_CRC::RRCR_2_0x4F7 = 0;
+    }
+    CRC4F7 = E2E_CRC8(MSG_Data,9);
+    @sysvar::Vehicle_input::Message_CRC::RRCR_2_0x4F7_1 = E2E_CRC8(MSG_Data,9);
+    if (CRC4F7 == data[0])
+    {
+    @sysvar::Vehicle_input::MSG::RRCR_2_0x4F7_LED = 1;
+    }
+    else 
+    {
+     @sysvar::Vehicle_input::MSG::RRCR_2_0x4F7_LED = 0;
+    } 
+   }
+  }     
+   
+    
+  //VCU_ONEBOX_11
+  if(aId == 0x03B)
+  {
+//    byte VCU_ONEBOX_11[65]={
+//      0,0,0,0,0,0,0,0,0,0, 
+//      0,0,0,0,0,0,0,0,0,0,
+//      0,0,0,0,0,0,0,0,0,0,
+//      0,0,0,0,0,0,0,0,0,0,
+//      0,0,0,0,0,0,0,0,0,0,
+//      0,0,0,0,0,0,0,0,0,0,
+//      0,0,0,0,0};
+    if(@sysvar::Vehicle_input::Message_Counter::VCU_ONEBOX_11_0x3B==1)
+    {
+      int current_counter;
+      current_counter++;
+      if(current_counter >= @sysvar::Vehicle_input::Message_Counter::Counter_unchange)
+      {
+        @sysvar::Vehicle_input::Message_Counter::VCU_ONEBOX_11_0x3B= 0;
+        current_counter = 0;
+      }
+    }
+    else  
+    {
+    data[25] = E2E_Counter(data,25);
+//VCU_ONEBOX_11[0] = 0x6C;
+//VCU_ONEBOX_11[1] = 0x00;
+    MSG_Data[0] = 0x6C;
+    MSG_Data[1] = 0x00;
+    for(i =1; i < 7; i++)
+    {
+      MSG_Data[i+1] = data[i+24];  
+    }
+//      for(i = 25; i < 63; i++)
+//    {
+//      VCU_ONEBOX_11[i+2] = data[i];
+//    }
+    data[24]  = E2E_CRC8(MSG_Data,9) + @sysvar::Vehicle_input::Message_CRC::VCU_ONEBOX_11_0x3B;
+    if(CompleteCrcFaultCycle(@sysvar::Vehicle_input::Message_CRC::VCU_ONEBOX_11_0x3B, 19))
+    {
+      @sysvar::Vehicle_input::Message_CRC::VCU_ONEBOX_11_0x3B = 0;
+    }
+    }
+  } 
+  
+  return 1; // don't prevent sending of the message
+}

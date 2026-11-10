@@ -1,0 +1,43 @@
+/*@!Encoding:936*/
+includes
+{
+  
+  
+ // #include "Include\Diagnostic\diagInstance.cin"
+ // #include "Include\Common.cin"
+}
+
+variables
+{
+  
+}
+
+
+on key 't'
+{
+  int i;
+  char variant[100]="";
+  char option[100]="";
+  word gSeedSize=16;
+  dword maxKeyArraySize=1000;
+  dword actualSize;
+  
+  byte SeedTemp[16] = {
+  0xE5, 0x44, 0xC0, 0x73, 0x7B, 0x22, 0xF0, 0xF1, 0x72,
+  0x80, 0xAE, 0x54, 0x08, 0x36, 0x00, 0x40
+};
+
+
+byte KeyTemp[16] = {
+  0x7E, 0xEF, 0x2A, 0xC6, 0x51, 0x44, 0x22, 0x46,
+  0x67, 0xA0, 0xD3, 0xA0, 0x18, 0x16, 0xA2, 0x2C
+};
+
+//canTpInitial("T1V_RLCR");
+
+diagSetTarget("T1V_RLCR");
+DiagGenerateKeyFromSeed(SeedTemp, gSeedSize, 0x11, variant, option, KeyTemp, maxKeyArraySize, actualSize);
+for(i=0;i<16;i++)
+  write("key[%d]=0x%02X",i,KeyTemp[i]);
+
+}

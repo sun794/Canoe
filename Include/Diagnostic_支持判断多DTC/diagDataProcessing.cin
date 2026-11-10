@@ -1,0 +1,30 @@
+/*@!Encoding:936*/
+
+
+dword CovertDTCStrToNum(char DTCString[])
+{
+  dword DTCValue;
+  char DTCStr[9]="0x";
+  
+  mbsubstr_cpy_off(DTCStr,2,DTCString,1,-1);
+  strtoul(DTCStr,DTCValue);
+  switch(toLower(DTCString[0]))
+  {
+    case 'p':
+      break;
+    case 'c':
+      DTCValue += (0x40 << 16);
+      break;
+    case 'b':
+      DTCValue += (0x80 << 16);
+      break;
+    case 'u':
+      DTCValue += (0xC0 << 16);
+      break;
+    default:
+      return -1;
+  }
+  write("需转换的DTC %s；转换后的DTC =%X",DTCString,DTCValue);
+  return DTCValue;
+}
+

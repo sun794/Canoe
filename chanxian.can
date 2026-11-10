@@ -1,0 +1,610 @@
+/*@!Encoding:936*/
+
+variables
+{
+  const int kChanxianPressureCycleCount = 1000;
+  const dword kResponseTimeoutMs = 5000;
+  const dword kD0AdReadIntervalMs = 1000;
+  const dword kCycleIntervalMs = 100;
+  const dword kDiagRequestId = 0x700;
+  const dword kDiagResponseId = 0x79F;
+
+  const int kStepDefaultSession = 0;
+  const int kStepExtendedSession = 1;
+  const int kStepSecuritySeed = 2;
+  const int kStepSecurityKey = 3;
+  const int kStepReadD0AdFirst = 4;
+  const int kStepReadD0AdSecond = 5;
+  const int kStepReadD101 = 6;
+  const int kStepReadD102 = 7;
+  const int kStepReadD103 = 8;
+  const int kStepReadD00D = 9;
+  const int kStepWriteD004 = 10;
+  const int kStepReadD004 = 11;
+  const int kStepWriteD00D = 12;
+  const int kStepReadD00DEnabled = 13;
+  const int kStepCount = 14;
+
+  msTimer gChanxianSendTimer;
+  msTimer gChanxianResponseTimer;
+  message 0x700 gChanxianExtendedSessionTx;
+  int gChanxianRunning;
+  int gChanxianCurrentCycle;
+  int gChanxianPassCount;
+  int gChanxianFailCount;
+  int gChanxianCurrentStep;
+  int gChanxianWaitingResponse;
+
+  byte gChanxianRequestData[64];
+  int gChanxianRequestLength;
+  byte gChanxianExpectedData[64];
+  int gChanxianExpectedLength;
+  int gChanxianMinimumResponseLength;
+  int gChanxianRequireExactLength;
+  byte gChanxianRequestSid;
+  char gChanxianStepName[80];
+
+  byte gChanxianResponseData[512];
+  int gChanxianResponseLength;
+  int gChanxianResponseExpectedLength;
+  int gChanxianNextSequenceNumber;
+}
+
+int ChanxianDlcToDataLength(int dlc)
+{
+  if((dlc >= 0) && (dlc <= 8))
+    return dlc;
+
+  switch(dlc)
+  {
+    case 9:  return 12;
+    case 10: return 16;
+    case 11: return 20;
+    case 12: return 24;
+    case 13: return 32;
+    case 14: return 48;
+    case 15: return 64;
+    default: return -1;
+  }
+}
+
+void ChanxianResetResponseState()
+{
+  gChanxianResponseLength = 0;
+  gChanxianResponseExpectedLength = 0;
+  gChanxianNextSequenceNumber = 1;
+}
+
+void ChanxianSetCurrentStep(char stepName[],
+                             byte requestData[],
+                             int requestLength,
+                             byte expectedData[],
+                             int expectedLength,
+                             int minimumResponseLength,
+                             int requireExactLength)
+{
+  int index;
+
+  snprintf(gChanxianStepName, elcount(gChanxianStepName), "%s", stepName);
+  gChanxianRequestLength = requestLength;
+  gChanxianExpectedLength = expectedLength;
+  gChanxianMinimumResponseLength = minimumResponseLength;
+  gChanxianRequireExactLength = requireExactLength;
+
+  for(index = 0; index < requestLength; index++)
+    gChanxianRequestData[index] = requestData[index];
+
+  for(index = 0; index < expectedLength; index++)
+    gChanxianExpectedData[index] = expectedData[index];
+
+  gChanxianRequestSid = requestData[0];
+}
+
+void ChanxianPrepareCurrentStep()
+{
+  byte requestData[32];
+  byte expectedData[32];
+
+  switch(gChanxianCurrentStep)
+  {
+    case kStepDefaultSession:
+      requestData[0] = 0x10; requestData[1] = 0x03;
+      expectedData[0] = 0x50; expectedData[1] = 0x03;
+      ChanxianSetCurrentStep("进入默认会话 10 03",
+                             requestData, 2, expectedData, 2, 2, 0);
+      break;
+
+    case kStepExtendedSession:
+      requestData[0] = 0x10; requestData[1] = 0x08;
+      expectedData[0] = 0x50; expectedData[1] = 0x08;
+      ChanxianSetCurrentStep("进入扩展会话 10 08",
+                             requestData, 2, expectedData, 2, 2, 0);
+      break;
+
+    case kStepSecuritySeed:
+      requestData[0] = 0x27; requestData[1] = 0x01;
+      expectedData[0] = 0x67; expectedData[1] = 0x01;
+      ChanxianSetCurrentStep("安全访问请求种子 27 01",
+                             requestData, 2, expectedData, 2, 2, 0);
+      break;
+
+    case kStepSecurityKey:
+      requestData[0] = 0x27; requestData[1] = 0x02;
+      requestData[2] = 0x42; requestData[3] = 0x4C;
+      requestData[4] = 0x2D; requestData[5] = 0x52;
+      expectedData[0] = 0x67; expectedData[1] = 0x02;
+      ChanxianSetCurrentStep("安全访问发送固定密钥 27 02 42 4C 2D 52",
+                             requestData, 6, expectedData, 2, 2, 0);
+      break;
+
+    case kStepReadD0AdFirst:
+      requestData[0] = 0x22; requestData[1] = 0xD0; requestData[2] = 0xAD;
+      expectedData[0] = 0x62; expectedData[1] = 0xD0; expectedData[2] = 0xAD;
+      ChanxianSetCurrentStep("第一次读取 D0 AD",
+                             requestData, 3, expectedData, 3, 4, 0);
+      break;
+
+    case kStepReadD0AdSecond:
+      requestData[0] = 0x22; requestData[1] = 0xD0; requestData[2] = 0xAD;
+      expectedData[0] = 0x62; expectedData[1] = 0xD0; expectedData[2] = 0xAD;
+      ChanxianSetCurrentStep("第二次读取 D0 AD",
+                             requestData, 3, expectedData, 3, 4, 0);
+      break;
+
+    case kStepReadD101:
+      requestData[0] = 0x22; requestData[1] = 0xD1; requestData[2] = 0x01;
+      expectedData[0] = 0x62; expectedData[1] = 0xD1; expectedData[2] = 0x01;
+      ChanxianSetCurrentStep("读取 D1 01",
+                             requestData, 3, expectedData, 3, 4, 0);
+      break;
+
+    case kStepReadD102:
+      requestData[0] = 0x22; requestData[1] = 0xD1; requestData[2] = 0x02;
+      expectedData[0] = 0x62; expectedData[1] = 0xD1; expectedData[2] = 0x02;
+      ChanxianSetCurrentStep("读取 D1 02",
+                             requestData, 3, expectedData, 3, 4, 0);
+      break;
+
+    case kStepReadD103:
+      requestData[0] = 0x22; requestData[1] = 0xD1; requestData[2] = 0x03;
+      expectedData[0] = 0x62; expectedData[1] = 0xD1; expectedData[2] = 0x03;
+      ChanxianSetCurrentStep("读取 D1 03",
+                             requestData, 3, expectedData, 3, 4, 0);
+      break;
+
+    case kStepReadD00D:
+      requestData[0] = 0x22; requestData[1] = 0xD0; requestData[2] = 0x0D;
+      expectedData[0] = 0x62; expectedData[1] = 0xD0; expectedData[2] = 0x0D;
+      ChanxianSetCurrentStep("读取 D0 0D 当前状态",
+                             requestData, 3, expectedData, 3, 4, 0);
+      break;
+
+    case kStepWriteD004:
+      requestData[0] = 0x2E; requestData[1] = 0xD0; requestData[2] = 0x04;
+      requestData[3] = 0x30; requestData[4] = 0x33; requestData[5] = 0x43;
+      requestData[6] = 0x52; requestData[7] = 0x41; requestData[8] = 0x33;
+      requestData[9] = 0x32; requestData[10] = 0x36; requestData[11] = 0x30;
+      requestData[12] = 0x38; requestData[13] = 0x31; requestData[14] = 0x30;
+      requestData[15] = 0x38; requestData[16] = 0x30; requestData[17] = 0x38;
+      requestData[18] = 0x38;
+      expectedData[0] = 0x6E; expectedData[1] = 0xD0; expectedData[2] = 0x04;
+      ChanxianSetCurrentStep("写入 D0 04 03CRA32608108088",
+                             requestData, 19, expectedData, 3, 3, 1);
+      break;
+
+    case kStepReadD004:
+      requestData[0] = 0x22; requestData[1] = 0xD0; requestData[2] = 0x04;
+      expectedData[0] = 0x62; expectedData[1] = 0xD0; expectedData[2] = 0x04;
+      expectedData[3] = 0x30; expectedData[4] = 0x33; expectedData[5] = 0x43;
+      expectedData[6] = 0x52; expectedData[7] = 0x41; expectedData[8] = 0x33;
+      expectedData[9] = 0x32; expectedData[10] = 0x36; expectedData[11] = 0x30;
+      expectedData[12] = 0x38; expectedData[13] = 0x31; expectedData[14] = 0x30;
+      expectedData[15] = 0x38; expectedData[16] = 0x30; expectedData[17] = 0x38;
+      expectedData[18] = 0x38;
+      ChanxianSetCurrentStep("回读 D0 04",
+                             requestData, 3, expectedData, 19, 19, 1);
+      break;
+
+    case kStepWriteD00D:
+      requestData[0] = 0x2E; requestData[1] = 0xD0;
+      requestData[2] = 0x0D; requestData[3] = 0x01;
+      expectedData[0] = 0x6E; expectedData[1] = 0xD0; expectedData[2] = 0x0D;
+      ChanxianSetCurrentStep("写入 D0 0D 01",
+                             requestData, 4, expectedData, 3, 3, 1);
+      break;
+
+    case kStepReadD00DEnabled:
+      requestData[0] = 0x22; requestData[1] = 0xD0; requestData[2] = 0x0D;
+      expectedData[0] = 0x62; expectedData[1] = 0xD0;
+      expectedData[2] = 0x0D; expectedData[3] = 0x01;
+      ChanxianSetCurrentStep("回读 D0 0D 01",
+                             requestData, 3, expectedData, 4, 4, 1);
+      break;
+
+    default:
+      gChanxianRequestLength = 0;
+      break;
+  }
+}
+
+void ChanxianFinishRun()
+{
+  gChanxianRunning = 0;
+  gChanxianWaitingResponse = 0;
+  cancelTimer(gChanxianSendTimer);
+  cancelTimer(gChanxianResponseTimer);
+  write("产线诊断压力测试结束：总轮次=%d，通过=%d，失败=%d。",
+        kChanxianPressureCycleCount,
+        gChanxianPassCount,
+        gChanxianFailCount);
+}
+
+void ChanxianAbortCurrentCycle()
+{
+  cancelTimer(gChanxianResponseTimer);
+  gChanxianWaitingResponse = 0;
+  gChanxianFailCount++;
+  gChanxianCurrentCycle++;
+
+  if(gChanxianCurrentCycle > kChanxianPressureCycleCount)
+  {
+    ChanxianFinishRun();
+    return;
+  }
+
+  gChanxianCurrentStep = kStepDefaultSession;
+  setTimer(gChanxianSendTimer, kCycleIntervalMs);
+}
+
+void ChanxianAdvanceStep()
+{
+  cancelTimer(gChanxianResponseTimer);
+  gChanxianWaitingResponse = 0;
+
+  if(gChanxianCurrentStep == kStepReadD00DEnabled)
+  {
+    gChanxianPassCount++;
+    gChanxianCurrentCycle++;
+    if(gChanxianCurrentCycle > kChanxianPressureCycleCount)
+    {
+      ChanxianFinishRun();
+      return;
+    }
+
+    gChanxianCurrentStep = kStepDefaultSession;
+    setTimer(gChanxianSendTimer, kCycleIntervalMs);
+    return;
+  }
+
+  gChanxianCurrentStep++;
+  if(gChanxianCurrentStep == kStepReadD0AdSecond)
+    setTimer(gChanxianSendTimer, kD0AdReadIntervalMs);
+  else
+    setTimer(gChanxianSendTimer, 1);
+}
+
+void ChanxianValidateResponse()
+{
+  int index;
+
+  if((gChanxianResponseLength == 3) &&
+     (gChanxianResponseData[0] == 0x7F) &&
+     (gChanxianResponseData[1] == gChanxianRequestSid) &&
+     (gChanxianResponseData[2] == 0x78))
+  {
+    ChanxianResetResponseState();
+    setTimer(gChanxianResponseTimer, kResponseTimeoutMs);
+    return;
+  }
+
+  if(gChanxianResponseLength < gChanxianMinimumResponseLength)
+  {
+    write("第%d轮 %s 响应长度不足：最小期望=%d，实际=%d。",
+          gChanxianCurrentCycle,
+          gChanxianStepName,
+          gChanxianMinimumResponseLength,
+          gChanxianResponseLength);
+    ChanxianAbortCurrentCycle();
+    return;
+  }
+
+  if((gChanxianRequireExactLength != 0) &&
+     (gChanxianResponseLength != gChanxianExpectedLength))
+  {
+    write("第%d轮 %s 响应长度错误：期望=%d，实际=%d。",
+          gChanxianCurrentCycle,
+          gChanxianStepName,
+          gChanxianExpectedLength,
+          gChanxianResponseLength);
+    ChanxianAbortCurrentCycle();
+    return;
+  }
+
+  for(index = 0; index < gChanxianExpectedLength; index++)
+  {
+    if(gChanxianResponseData[index] != gChanxianExpectedData[index])
+    {
+      write("第%d轮 %s 第%d字节错误：期望=0x%02X，实际=0x%02X。",
+            gChanxianCurrentCycle,
+            gChanxianStepName,
+            index,
+            gChanxianExpectedData[index],
+            gChanxianResponseData[index]);
+      ChanxianAbortCurrentCycle();
+      return;
+    }
+  }
+
+  ChanxianAdvanceStep();
+}
+
+void ChanxianSendExtendedSessionRaw()
+{
+  int index;
+
+  gChanxianExtendedSessionTx.id = kDiagRequestId;
+  gChanxianExtendedSessionTx.dlc = 8;
+  gChanxianExtendedSessionTx.FDF = 1;
+  gChanxianExtendedSessionTx.BRS = 1;
+  for(index = 0; index < 8; index++)
+    gChanxianExtendedSessionTx.byte(index) = 0x00;
+
+  // Keep the complete production-line frame exactly as captured.
+  gChanxianExtendedSessionTx.byte(0) = 0x02;
+  gChanxianExtendedSessionTx.byte(1) = 0x10;
+  gChanxianExtendedSessionTx.byte(2) = 0x08;
+  gChanxianExtendedSessionTx.byte(3) = 0x42;
+  gChanxianExtendedSessionTx.byte(4) = 0x4C;
+  gChanxianExtendedSessionTx.byte(5) = 0x2D;
+  gChanxianExtendedSessionTx.byte(6) = 0x52;
+  gChanxianExtendedSessionTx.byte(7) = 0x44;
+  output(gChanxianExtendedSessionTx);
+}
+
+void ChanxianSendCurrentRequest()
+{
+  long sendResult;
+  diagRequest* request;
+
+  if(!gChanxianRunning)
+    return;
+
+  if(gChanxianCurrentStep == kStepDefaultSession)
+  {
+    write("产线诊断压力测试：第%d/%d轮。",
+          gChanxianCurrentCycle,
+          kChanxianPressureCycleCount);
+  }
+
+  ChanxianPrepareCurrentStep();
+  if(gChanxianRequestLength <= 0)
+  {
+    write("第%d轮 无效的诊断步骤索引=%d。",
+          gChanxianCurrentCycle,
+          gChanxianCurrentStep);
+    ChanxianAbortCurrentCycle();
+    return;
+  }
+
+  // Factory_Calib.cdd 的诊断目标名为 FactoryCalib，地址为0x700/0x79F。
+  diagSetTarget("FactoryCalib");
+  DiagResize(request, gChanxianRequestLength);
+  DiagSetPrimitiveData(request,
+                       gChanxianRequestData,
+                       gChanxianRequestLength);
+
+  ChanxianResetResponseState();
+  gChanxianWaitingResponse = 1;
+  setTimer(gChanxianResponseTimer, kResponseTimeoutMs);
+
+  if(gChanxianCurrentStep == kStepExtendedSession)
+  {
+    ChanxianSendExtendedSessionRaw();
+    return;
+  }
+
+  sendResult = diagSendRequest(request);
+  if(sendResult < 0)
+  {
+    write("第%d轮 %s 发送失败：结果=%ld。",
+          gChanxianCurrentCycle,
+          gChanxianStepName,
+          sendResult);
+    ChanxianAbortCurrentCycle();
+  }
+}
+
+on start
+{
+  gChanxianRunning = 0;
+  gChanxianWaitingResponse = 0;
+  gChanxianCurrentCycle = 0;
+  gChanxianPassCount = 0;
+  gChanxianFailCount = 0;
+  gChanxianCurrentStep = kStepDefaultSession;
+  ChanxianResetResponseState();
+}
+
+on key 'p'
+{
+  if(gChanxianRunning)
+  {
+    write("产线诊断压力测试已在执行中：当前第%d轮。",
+          gChanxianCurrentCycle);
+    return;
+  }
+
+  gChanxianRunning = 1;
+  gChanxianWaitingResponse = 0;
+  gChanxianCurrentCycle = 1;
+  gChanxianPassCount = 0;
+  gChanxianFailCount = 0;
+  gChanxianCurrentStep = kStepDefaultSession;
+  ChanxianResetResponseState();
+//  write("产线诊断压力测试开始：%d轮。DMM电压约11.4 V需人工确认；按s停止。",
+//        kChanxianPressureCycleCount);
+  setTimer(gChanxianSendTimer, 1);
+}
+
+on key 's'
+{
+  if(!gChanxianRunning)
+    return;
+
+  gChanxianRunning = 0;
+  gChanxianWaitingResponse = 0;
+  cancelTimer(gChanxianSendTimer);
+  cancelTimer(gChanxianResponseTimer);
+  write("产线诊断压力测试已手动停止：当前第%d轮，通过=%d，失败=%d。",
+        gChanxianCurrentCycle,
+        gChanxianPassCount,
+        gChanxianFailCount);
+}
+
+on timer gChanxianSendTimer
+{
+  ChanxianSendCurrentRequest();
+}
+
+on timer gChanxianResponseTimer
+{
+  if(!gChanxianRunning || !gChanxianWaitingResponse)
+    return;
+
+  write("第%d轮 %s 响应超时（%d ms）。",
+        gChanxianCurrentCycle,
+        gChanxianStepName,
+        kResponseTimeoutMs);
+  ChanxianAbortCurrentCycle();
+}
+
+on message *
+{
+  int dataLength;
+  int pciType;
+  int payloadLength;
+  int payloadStart;
+  int index;
+  int sequenceNumber;
+  int remainingLength;
+
+  if(!gChanxianRunning || !gChanxianWaitingResponse ||
+     (this.ID != kDiagResponseId))
+    return;
+
+  dataLength = ChanxianDlcToDataLength(this.dlc);
+  if(dataLength <= 0)
+  {
+    write("第%d轮 %s 收到无效诊断响应DLC=%d。",
+          gChanxianCurrentCycle,
+          gChanxianStepName,
+          this.dlc);
+    ChanxianAbortCurrentCycle();
+    return;
+  }
+
+  pciType = this.byte(0) >> 4;
+  if(pciType == 0)
+  {
+    if((this.byte(0) & 0x0F) != 0)
+    {
+      payloadLength = this.byte(0) & 0x0F;
+      payloadStart = 1;
+    }
+    else
+    {
+      if(dataLength < 2)
+      {
+        ChanxianAbortCurrentCycle();
+        return;
+      }
+
+      payloadLength = this.byte(1);
+      payloadStart = 2;
+    }
+
+    if((payloadLength <= 0) ||
+       (payloadLength > (dataLength - payloadStart)) ||
+       (payloadLength > elcount(gChanxianResponseData)))
+    {
+      write("第%d轮 %s 收到无效单帧响应长度=%d。",
+            gChanxianCurrentCycle,
+            gChanxianStepName,
+            payloadLength);
+      ChanxianAbortCurrentCycle();
+      return;
+    }
+
+    for(index = 0; index < payloadLength; index++)
+      gChanxianResponseData[index] = this.byte(payloadStart + index);
+    gChanxianResponseLength = payloadLength;
+    ChanxianValidateResponse();
+    return;
+  }
+
+  if(pciType == 1)
+  {
+    if(dataLength < 3)
+    {
+      ChanxianAbortCurrentCycle();
+      return;
+    }
+
+    gChanxianResponseExpectedLength =
+      ((this.byte(0) & 0x0F) << 8) | this.byte(1);
+    if((gChanxianResponseExpectedLength <= 0) ||
+       (gChanxianResponseExpectedLength > elcount(gChanxianResponseData)))
+    {
+      write("第%d轮 %s 收到无效首帧长度=%d。",
+            gChanxianCurrentCycle,
+            gChanxianStepName,
+            gChanxianResponseExpectedLength);
+      ChanxianAbortCurrentCycle();
+      return;
+    }
+
+    payloadLength = dataLength - 2;
+    if(payloadLength > gChanxianResponseExpectedLength)
+      payloadLength = gChanxianResponseExpectedLength;
+    for(index = 0; index < payloadLength; index++)
+      gChanxianResponseData[index] = this.byte(index + 2);
+    gChanxianResponseLength = payloadLength;
+    gChanxianNextSequenceNumber = 1;
+
+    if(gChanxianResponseLength == gChanxianResponseExpectedLength)
+      ChanxianValidateResponse();
+    return;
+  }
+
+  if(pciType == 2)
+  {
+    if(gChanxianResponseExpectedLength <= 0)
+      return;
+
+    sequenceNumber = this.byte(0) & 0x0F;
+    if(sequenceNumber != gChanxianNextSequenceNumber)
+    {
+      write("第%d轮 %s 连续帧序号错误：期望=%d，实际=%d。",
+            gChanxianCurrentCycle,
+            gChanxianStepName,
+            gChanxianNextSequenceNumber,
+            sequenceNumber);
+      ChanxianAbortCurrentCycle();
+      return;
+    }
+
+    remainingLength =
+      gChanxianResponseExpectedLength - gChanxianResponseLength;
+    payloadLength = dataLength - 1;
+    if(payloadLength > remainingLength)
+      payloadLength = remainingLength;
+    for(index = 0; index < payloadLength; index++)
+      gChanxianResponseData[gChanxianResponseLength + index] =
+        this.byte(index + 1);
+    gChanxianResponseLength += payloadLength;
+    gChanxianNextSequenceNumber = (gChanxianNextSequenceNumber + 1) & 0x0F;
+
+    if(gChanxianResponseLength == gChanxianResponseExpectedLength)
+      ChanxianValidateResponse();
+  }
+}

@@ -1,0 +1,525 @@
+/*@!Encoding:936*/
+/// <Converter>
+
+
+
+
+variables
+{
+  message 0x100 testmsg_forbusload1;
+  message 0x101 testmsg_forbusload2;   
+  message 0x102 testmsg_forbusload3;
+  message 0x103 testmsg_forbusload4;
+  message 0x104 testmsg_forbusload5;
+  message 0x105 testmsg_forbusload6;
+  msTimer t_busload1;
+  msTimer t_busload2;
+  msTimer t_busload3;
+  msTimer t_busload4;
+  msTimer t_busload5;
+  msTimer t_busload6;
+  const int cNodeCycMsgNum = 200;
+  long  gNumOfNodeSendCycMsg = 0;   
+  dword gIdOfNodeSendCycMsg[cNodeCycMsgNum];
+  long  gDLCOfNodeSendCycMsg[cNodeCycMsgNum];
+  long  gCycOfNodeSendCycMsg[cNodeCycMsgNum];
+  long  gOccurofNodeSendCycMsg[cNodeCycMsgNum];
+  
+}
+
+
+
+
+
+on timer t_busload1
+{
+  testmsg_forbusload1.can=1;
+  testmsg_forbusload1.dlc=8;
+  testmsg_forbusload1.dword(0) = 0x11111111;
+  testmsg_forbusload1.dword(4) = 0x11111111;
+  output(testmsg_forbusload1);
+  
+}
+
+on timer t_busload2
+{
+  testmsg_forbusload2.can=1;
+  testmsg_forbusload2.dlc=8;
+  testmsg_forbusload2.dword(0) = 0x22222222;
+  testmsg_forbusload2.dword(4) = 0x22222222;
+  output(testmsg_forbusload2);
+
+  
+}
+on timer t_busload3
+{
+  testmsg_forbusload3.can=1;
+  testmsg_forbusload3.dlc=8;
+  testmsg_forbusload3.dword(0) = 0x33333333;
+  testmsg_forbusload3.dword(4) = 0x33333333;
+  output(testmsg_forbusload3);
+
+  
+}
+
+on timer t_busload4
+{
+  testmsg_forbusload4.can=1;
+  testmsg_forbusload4.dlc=8;
+  testmsg_forbusload4.dword(0) = 0x44444444;
+  output(testmsg_forbusload4);
+
+  
+}
+
+on timer t_busload5
+{
+  testmsg_forbusload5.can=1;
+  testmsg_forbusload5.dlc=8;
+  testmsg_forbusload5.dword(0) = 0x55555555;
+  testmsg_forbusload5.dword(4) = 0x55555555;
+  output(testmsg_forbusload5);
+
+  
+}
+
+on timer t_busload6
+{
+  testmsg_forbusload6.can=1;
+  testmsg_forbusload6.dlc=8;
+  testmsg_forbusload6.dword(0) = 0x66666666;
+  testmsg_forbusload6.dword(4) = 0x66666666;
+  output(testmsg_forbusload6);
+  
+}
+
+/// <Busload>
+void busloadplus(long plus_num)
+{
+  float busload_msg_cyc;
+  float busload_msg_cyc2;
+  float busload_msg_cyc3;
+  float busload_msg_cyc4;
+  float busload_msg_cyc5;
+  
+  if(plus_num<=20&&plus_num>=0){
+    
+    busload_msg_cyc = 20/plus_num;
+    setTimerCyclic(t_busload1,busload_msg_cyc);
+    canceltimer(t_busload2);
+    canceltimer(t_busload3);
+    canceltimer(t_busload4);
+    canceltimer(t_busload5);
+  }
+  if(plus_num<=40&&plus_num>20){
+    
+    busload_msg_cyc = 1;
+    busload_msg_cyc2 = 20/(plus_num-20);
+    setTimerCyclic(t_busload1,busload_msg_cyc);
+    setTimerCyclic(t_busload2,busload_msg_cyc2);
+    canceltimer(t_busload3);
+    canceltimer(t_busload4);
+    canceltimer(t_busload5);
+  }
+  if(plus_num<=60&&plus_num>40){
+    
+    busload_msg_cyc = 1;
+    busload_msg_cyc2 = 1;
+    busload_msg_cyc3 = 20/(plus_num-40);
+    setTimerCyclic(t_busload1,busload_msg_cyc);
+    setTimerCyclic(t_busload2,busload_msg_cyc2);
+    setTimerCyclic(t_busload3,busload_msg_cyc3);
+    canceltimer(t_busload4);
+    canceltimer(t_busload5);
+  }
+  if(plus_num<=80&&plus_num>60){
+    
+    busload_msg_cyc = 1;
+    busload_msg_cyc2 = 1;
+    busload_msg_cyc3 = 1;
+    busload_msg_cyc4 = 20/(plus_num-60);
+    setTimerCyclic(t_busload1,busload_msg_cyc);
+    setTimerCyclic(t_busload2,busload_msg_cyc2);
+    setTimerCyclic(t_busload3,busload_msg_cyc3);
+    setTimerCyclic(t_busload4,busload_msg_cyc4);
+    canceltimer(t_busload5);    
+  }
+  if(plus_num>80&&plus_num<100)
+  {
+    busload_msg_cyc = 1;
+    busload_msg_cyc2 = 1;
+    busload_msg_cyc3 = 1;
+    busload_msg_cyc4 = 1;
+    busload_msg_cyc5 = 20/(plus_num-80);
+    setTimerCyclic(t_busload1,busload_msg_cyc);
+    setTimerCyclic(t_busload2,busload_msg_cyc2);
+    setTimerCyclic(t_busload3,busload_msg_cyc3);
+    setTimerCyclic(t_busload4,busload_msg_cyc4);
+    setTimerCyclic(t_busload5,busload_msg_cyc5);
+  }
+}
+
+/// <Busload>
+void CancelBusloadTest()
+{
+  cancelTimer(t_busload1);
+  cancelTimer(t_busload2);
+  cancelTimer(t_busload3);
+  cancelTimer(t_busload4);
+  cancelTimer(t_busload5);
+  cancelTimer(t_busload6);
+}
+
+/// <Busload>
+long check_channel_busload (int test_chn)
+{
+  long chn_busload;
+  switch(test_chn)
+  {
+    case 1:
+      chn_busload = can1.busload;
+      break;
+    case 2:
+      chn_busload = can2.busload;
+      break;
+    case 3:
+      chn_busload = can3.busload;
+      break;
+    case 4:
+      chn_busload = can4.busload;
+      break;
+    case 5:
+      chn_busload = can5.busload;
+      break;
+    case 6:
+      chn_busload = can6.busload;
+     break;
+    default:
+     break;
+  }
+  
+  return chn_busload;
+}
+
+
+/// <Converter>
+// hex格式转bcd格式
+word HexToBcd(word hexData)
+{
+	word bcdData;
+	bcdData = ((hexData / 10) << 4) + (hexData % 10);
+	return bcdData;
+}
+
+
+/// <Converter>
+void FormatAddressAndSize(dword address, dword size, byte data[])
+{
+  data[0] = 0x44;
+  data[1] = (address>>24) & 0xFF;
+  data[2] = (address>>16) & 0xFF;
+  data[3] = (address>>8) & 0xFF;
+  data[4] = (address) & 0xFF;
+  data[5] = (size>>24) & 0xFF;
+  data[6] = (size>>16) & 0xFF;
+  data[7] = (size>>8) & 0xFF;
+  data[8] = (size) & 0xFF;
+}
+
+void FormatDwordToBytes(dword sourceData, byte data[])
+{
+  data[0] = (sourceData>>24) & 0xFF;
+  data[1] = (sourceData>>16) & 0xFF;
+  data[2] = (sourceData>>8) & 0xFF;
+  data[3] = sourceData & 0xFF;
+}
+
+
+//将16进制数字符转换成字符类型字符串（如显示版本号）
+int CharToString(byte data[], dword dataLen, int startPos, char strHex[])
+{
+  int i;
+  char strTemp[60];
+  int len;
+   
+  strncpy(strHex,"",elcount(strHex));
+  len = dataLen - startPos;
+  
+  if(len <= 0)
+  {
+    snprintf(strHex, elCount(strHex), "格式错误，请检查语法！ ");
+    return 0;
+  }
+  else if(len <= 100)
+  {
+    for(i=startPos;i<dataLen;i++)
+    {
+      snprintf(strTemp, elCount(strTemp), "%c", data[i]);
+      strncat(strHex, strTemp, elCount(strHex));
+    }
+  }
+  
+  return len;
+}
+int BytesToHexString(byte data[], dword dataLen, int startPos, char strHex[])
+{
+  int i;
+  char strTemp[60];
+  int len;
+   
+  strncpy(strHex,"",elcount(strHex));
+  len = dataLen - startPos;
+  
+  if(len <= 0)
+  {
+    snprintf(strHex, elCount(strHex), "格式错误，请检查语法！ ");
+    return 0;
+  }
+  else if(len <= 25)
+  {
+    for(i=startPos;i<dataLen;i++)
+    {
+      snprintf(strTemp, elCount(strTemp), "%02X ", data[i]);
+      strncat(strHex, strTemp, elCount(strHex));
+    }
+  }
+  else //如果后面的数据太多，就只显示前面20个数据和最后5个数据，总体显示数据还是为25个字节
+  {
+    for(i=startPos;i<startPos+20;i++)
+    {
+      snprintf(strTemp, elCount(strTemp), "%02X ", data[i]);
+      strncat(strHex, strTemp, elCount(strHex));
+    }
+    snprintf(strTemp, elcount(strTemp), "... ...");
+    strncat(strHex, strTemp, elCount(strHex));
+    for(i=dataLen-5;i<dataLen;i++)
+    {
+      snprintf(strTemp, elCount(strTemp), "%02X ", data[i]);
+      strncat(strHex, strTemp, elCount(strHex));
+    }
+  }
+  snprintf(strTemp, elcount(strTemp), " [%u，0x%X字节] ", len, len);//在最后显示整体数据长度即可
+  strncat(strHex, strTemp, elCount(strHex));
+  return len;
+}
+
+
+/// <CaplOutPutPanel>
+void CaplPutValueToControl(char panel[], char control[], char val[])
+{
+  putValueToControl(panel,control, val);
+
+}
+
+// 给16进制字符串添加前缀，并判断合法性，如果不合法返回0，反之返回1
+long checkStrHex(char strHexSrc[], char strHexDes[])
+{
+//  if(str_match_regex(strHexSrc, "\b(?:0[xX])?[0-9a-fA-F]+\b") == 0)
+//  {
+//    write("%s 不是有效的十六进制数", strHexSrc);
+//    return 0;
+//  }
+  if(strstr(strHexSrc, "0x")<0 || strstr(strHexSrc, "0X")<0)
+    snprintf(strHexDes,elCount(strHexDes),"0x%s",strHexSrc); 
+  else
+    snprintf(strHexDes,elCount(strHexDes),"%s",strHexSrc); 
+  return 1;
+}
+
+/// <Converter>
+//将一个16进制的字符串转换成一个long型数据 long: signed, 4 Byte
+long hexStringToLong(char strHex[])
+{
+  char strHex0x[11];
+  if(checkStrHex(strHex, strHex0x) == 0)
+    return 0;
+  return atol(strHex0x);
+}
+
+/// <Converter>
+//将一个16进制的字符串转换成一个int64型数据 int64: signed, 8 Byte
+int64 hexStringToInt64(char strHex[])
+{
+  char strHex0x[19];
+  if(checkStrHex(strHex, strHex0x) == 0)
+    return 0;
+  return _atoi64(strHex0x);
+}
+
+/// <Delay>
+void TestStepWaitOutput(char step[], dword ms)
+{
+  testStep(step, "等待 %d ms", ms);
+  testWaitForTimeout(ms);
+}
+
+/// <Converter>
+dword SumFromArray(dword data[], dword dataLen)
+{
+  dword i, sum;
+  sum = 0;
+  for(i=0;i<dataLen;i++)
+  {
+    sum += data[i];
+  }
+  return sum;
+}
+
+/// <CorlorPrint>
+void GreenPrint( char string[])
+{
+  writeTextbkgColor(1,0,200,0);
+  write("\n");
+  write(string);
+  write("\n");
+  writeTextbkgColor(1,255,255,255);
+}
+
+/// <CorlorPrint>
+void YellowPrint( char string[])
+{ 
+  writeTextbkgColor(1,255,255,0);
+  write("\n");
+  write(string);
+  write("\n");
+  writeTextbkgColor(1,255,255,255);
+}
+
+/// <CorlorPrint>
+void RedPrint( char string[])
+{
+  writeTextbkgColor(1,250,0,0);
+  write("\n");
+  write(string);
+  write("\n");
+  writeTextbkgColor(1,255,255,255);
+}
+
+/// <CorlorPrint>
+void BluePrint( char string[])
+{
+  writeTextbkgColor(1,0,100,255);
+  write("\n");
+  write(string);
+  write("\n");
+  writeTextbkgColor(1,255,255,255);
+}
+
+/// <CorlorPrint>
+void OrangePrint( char string[])
+{
+  writeTextbkgColor(1,250,168,0);
+  write("\n");
+  write(string);
+  write("\n");
+  writeTextbkgColor(1,255,255,255);
+}
+
+/// <CorlorPrint>
+void BlueSkyPrint( char string[])
+{
+  writeTextbkgColor(1,87,250,255);
+  write(string);
+  writeTextbkgColor(1,255,255,255);
+}
+
+/// <CorlorPrint>
+void CherryRedPrint( char string[])
+{
+  writeTextbkgColor(1,245,100,100);
+  write("\n");
+  write(string);
+  write("\n");
+  writeTextbkgColor(1,255,255,255);
+}
+
+/// <CorlorPrint>
+void PurplePrint( char string[])
+{
+  writeTextbkgColor(1,100,50,200);
+  write("\n");
+  write(string);
+  write("\n");
+  writeTextbkgColor(1,255,255,255);
+}
+
+
+/// <Compare>
+int CompareArrays(byte arr1[], byte arr2[],int size)
+  {
+    int i;
+    for (i = 0; i < size; i++) 
+    {
+        if (arr1[i] != arr2[i]) 
+        {
+            return 1; // 返回-1表示数组不相等
+        }
+    }
+    return 0; // 返回0表示数组相等
+  }
+  
+int GetDUTSendAppMsgInfo(char TestEcuNode[]) //输入ECU的节点名称
+{
+  message * MessageTemp;
+  int i,msgid;
+  dword  searchRange=0x7ff;
+ 
+  for(i=0;i<cNodeCycMsgNum;i++)   //Array Initialization
+  {
+    gIdOfNodeSendCycMsg[i] = 0;
+    gDLCOfNodeSendCycMsg[i] = 0;
+    gCycOfNodeSendCycMsg[i] = 0;
+    gOccurofNodeSendCycMsg[i] =0;
+  }
+
+    gNumOfNodeSendCycMsg=0;
+  //  MessageTemp.can = @sysvar::CommonSysVar::CANChn;      //指定 所查询的dbc所在的通道  TODO
+    for(msgid=0;msgid<searchRange;msgid++)//search message in ID range 0x00~0x7ff
+    {
+      MessageTemp.id = msgid;
+      //筛选ECU_NODE下的tx的message的条件，GenMsgCycleTime！=0可以直接排除掉诊断报文，GenMsgSendType=0表示类型在dbc里面为cycle，这个参数类型为枚举变量，cycle是首个枚举元素，因此是0
+      if (strncmp(DBLookup(MessageTemp).Transmitter,TestEcuNode,50)==0 && DBLookup(MessageTemp).GenMsgCycleTime != 0 && DBLookup(MessageTemp).GenMsgSendType==0)
+      {
+        gIdOfNodeSendCycMsg[gNumOfNodeSendCycMsg] = msgid;
+        gDLCOfNodeSendCycMsg[gNumOfNodeSendCycMsg] = DBLookup(MessageTemp).DLC;
+        gCycOfNodeSendCycMsg[gNumOfNodeSendCycMsg] = DBLookup(MessageTemp).GenMsgCycleTime;
+       // write("gIdOfNodeSendCycMsg[%d]=0x%X",gNumOfNodeSendCycMsg, gIdOfNodeSendCycMsg[gNumOfNodeSendCycMsg]);
+        gNumOfNodeSendCycMsg++;     
+         
+      }
+    }
+    if(gNumOfNodeSendCycMsg==0)
+    {
+      teststepfail("","从DBC上检索该ECU的应用报文失败!---->gNumOfNodeSendCycMsg = %d",gNumOfNodeSendCycMsg);
+      return 0;
+    }
+    testStep("","成功从DBC找到ECU发送报文信息!");
+    return 1;
+}
+  
+int CheckEcuSendMsg(char TestEcuNode[])
+{
+  int i;
+  
+   if(GetDUTSendAppMsgInfo(TestEcuNode)==1)//初始测试节点信息，主要是为了将ECU会发送的报文ID信息都获取出来并赋值给gIdOfNodeSendCycAppMsg数组
+  {
+    
+    for(i=0;i<gNumOfNodeSendCycMsg;i++)
+     {
+      if(testWaitForMessage(gIdOfNodeSendCycMsg[i],2000)==0)
+       {
+         write("2S内未收到ECU报文ID =0x%03X 通讯异常！",gIdOfNodeSendCycMsg[i]);
+         testStepFail("","2S内未收到ECU报文ID =0x%03X 通讯异常！",gIdOfNodeSendCycMsg[i]);
+         return 0;
+       }
+      else
+      {
+       // testStepPass("","成功收到ECU报文ID =0x%03X 通讯正常！",gIdOfNodeSendCycMsg[i]);
+        write("成功收到ECU报文ID =0x%03X 通讯正常！",gIdOfNodeSendCycMsg[i]);
+      }
+    }
+}
+  testStepPass("","成功收到ECU的全部报文，通讯正常！");
+  write("成功收到ECU的全部报文，通讯正常！");
+  return 1;
+}
