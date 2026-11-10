@@ -1,0 +1,11 @@
+# 新建 .gitignore 写入过滤规则
+@'
+# CANoe 临时产物
+*.bak
+*.vxt
+*.sttse
+*.tse
+*.html
+*.xml
+ReportAndLog/
+'@ | Out-File .gitignore -Encoding utf8
