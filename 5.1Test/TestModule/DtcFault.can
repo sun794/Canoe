@@ -2126,6 +2126,8 @@ int CheckRecoveredDtcWithStatus09Retry(dword expectedDtc, dword communicationLos
                "第3帧恢复报文后的首次19 02 09仍为0x09；补充帧后的复读不参与状态判定，按当前逻辑判定失败。");
   return 0;
 }
+// 公共时序：故障态读取不额外等待；收到最终响应后恢复报文，连续确认3帧正常后等待5 ms复读。
+// 此流程只负责读取与结果判定，不调整周期发送配置。
 int CheckDtcAndRecoveryFlow(dword expectedDtc, dword communicationLossDtc)
 {
   int result;
@@ -2149,6 +2151,7 @@ int CheckDtcAndRecoveryFlow(dword expectedDtc, dword communicationLossDtc)
   return faultResult && result;
 }
 
+// 按恢复报文来源自动匹配需要排除的通讯丢失DTC。
 int CheckCurrentDtc(dword expectedDtc)
 {
   dword communicationLossDtc;
@@ -2158,6 +2161,7 @@ int CheckCurrentDtc(dword expectedDtc)
   return CheckDtcAndRecoveryFlow(expectedDtc, communicationLossDtc);
 }
 
+// 显式指定需要排除的通讯丢失DTC，并记录故障帧完成后立即读取。
 int CheckCurrentDtcAndNoCommunicationLoss(dword expectedDtc,
   dword communicationLossDtc, char messageName[])
 {
